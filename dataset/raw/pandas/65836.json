@@ -1,0 +1,170 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65836,
+  "title": "BUG: Series.sort_values ignore_index has no effect on already sorted Series (#65833)",
+  "description": "**Problem:** When a Series is already sorted, `sort_values()` returns early without applying `ignore_index`.\n\n**Root cause:** The early return path (for the already-sorted case) at `pandas/core/series.py:4081` copied the Series directly without checking `ignore_index`.\n\n**Fix:** Move the `ignore_index` index reset into the early return path for both the `inplace` and non-`inplace` branches.\n\nCloses #65833",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-1",
+      "patch": "@@ -408,6 +408,7 @@ Reshaping\n - Bug in :func:`merge` where merging on a :class:`MultiIndex` containing ``NaN`` values mapped ``NaN`` keys to the last level value instead of ``NaN`` (:issue:`64492`)\n - Bug in :meth:`DataFrame.pivot_table` with ``margins=True`` raising ``TypeError`` when ``values`` has an :class:`ExtensionDtype` that cannot hold ``NA`` (e.g. :class:`IntervalDtype` with an integer subtype) and no ``columns`` were specified (:issue:`55484`)\n - Bug in :meth:`Index.union` where the result could be unsorted when both inputs were monotonic increasing but disjoint, when ``sort`` was not ``False`` (:issue:`54646`)\n+- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)\n - In :func:`pivot_table`, when ``values`` is empty, the aggregation will be computed on a Series of all NA values (:issue:`46475`)\n -\n ",
+      "changed_code": "- Bug in :func:`merge` where merging on a :class:`MultiIndex` containing ``NaN`` values mapped ``NaN`` keys to the last level value instead of ``NaN`` (:issue:`64492`)\n- Bug in :meth:`DataFrame.pivot_table` with ``margins=True`` raising ``TypeError`` when ``values`` has an :class:`ExtensionDtype` that cannot hold ``NA`` (e.g. :class:`IntervalDtype` with an integer subtype) and no ``columns`` were specified (:issue:`55484`)\n- Bug in :meth:`Index.union` where the result could be unsorted when both inputs were monotonic increasing but disjoint, when ``sort`` was not ``False`` (:issue:`54646`)\n- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)\n- In :func:`pivot_table`, when ``values`` is empty, the aggregation will be computed on a Series of all NA values (:issue:`46475`)\n-",
+      "review_comments": [
+        {
+          "id": 3408130016,
+          "user": "rhshadrach",
+          "body": "Can you move this to the reshaping section.",
+          "line": null,
+          "original_line": 331,
+          "position": 1,
+          "target_code": "@@ -328,8 +328,8 @@ Indexing\n - Bug in :meth:`Series.where` and :meth:`Series.mask` raising ``ValueError`` when ``other`` is a tuple on object-dtype :class:`Series` (:issue:`37681`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning an iterable to a single cell in an ``object`` dtype column incorrectly raised a ``ValueError`` (:issue:`57962`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning with duplicate column names and new columns corrupted unrelated columns (:issue:`58317`)\n+- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3409069541,
+          "user": "rahul-COD3",
+          "body": "Moved it to Reshaping, thanks.",
+          "line": null,
+          "original_line": 331,
+          "position": 1,
+          "target_code": "@@ -328,8 +328,8 @@ Indexing\n - Bug in :meth:`Series.where` and :meth:`Series.mask` raising ``ValueError`` when ``other`` is a tuple on object-dtype :class:`Series` (:issue:`37681`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning an iterable to a single cell in an ``object`` dtype column incorrectly raised a ``ValueError`` (:issue:`57962`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning with duplicate column names and new columns corrupted unrelated columns (:issue:`58317`)\n+- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)",
+          "source": "review_comment"
+        },
+        {
+          "id": 4671154593,
+          "user": "rahul-COD3",
+          "body": "Added a test for the already-sorted case (`test_sort_values_ignore_index_on_already_sorted`) and a whatsnew entry for v3.1.0 under the Indexing section. All 13 tests pass.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4757454249,
+          "user": "rhshadrach",
+          "body": "Thanks @rahul-COD3!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/series.py",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 2,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-2",
+      "patch": "@@ -4079,9 +4079,12 @@ def sort_values(\n         sorted_index = nargsort(values_to_sort, kind, bool(ascending), na_position)\n \n         if is_range_indexer(sorted_index, len(sorted_index)):\n+            result = self if inplace else self.copy(deep=False)\n+            if ignore_index:\n+                result.index = default_index(len(sorted_index))\n             if inplace:\n-                return self._update_inplace(self)\n-            return self.copy(deep=False)\n+                return None\n+            return result\n \n         result = self._constructor(\n             self._values[sorted_index], index=self.index[sorted_index], copy=False",
+      "changed_code": "sorted_index = nargsort(values_to_sort, kind, bool(ascending), na_position)\n\n        if is_range_indexer(sorted_index, len(sorted_index)):\n            result = self if inplace else self.copy(deep=False)\n            if ignore_index:\n                result.index = default_index(len(sorted_index))\n            if inplace:\n                return self._update_inplace(self)\n            return self.copy(deep=False)\n                return None\n            return result\n\n        result = self._constructor(\n            self._values[sorted_index], index=self.index[sorted_index], copy=False",
+      "review_comments": [
+        {
+          "id": 3408129712,
+          "user": "rhshadrach",
+          "body": "I think we can make this a bit more DRY:\n\n```python\nif is_range_indexer(sorted_index, len(sorted_index)):\n  result = self if inplace else self.copy(deep=False)\n  if ignore_index: \n      result.index = default_index(len(sorted_index))\n  if inplace:\n      return None\n  return result\n```",
+          "line": 4087,
+          "original_line": 4090,
+          "position": 11,
+          "target_code": "@@ -4080,8 +4080,14 @@ def sort_values(\n \n         if is_range_indexer(sorted_index, len(sorted_index)):\n             if inplace:\n-                return self._update_inplace(self)\n-            return self.copy(deep=False)\n+                self._update_inplace(self)\n+                if ignore_index:\n+                    self.index = default_index(len(sorted_index))\n+                return None\n+            result = self.copy(deep=False)\n+            if ignore_index:\n+                result.index = default_index(len(sorted_index))\n+            return result",
+          "source": "review_comment"
+        },
+        {
+          "id": 3409070351,
+          "user": "rahul-COD3",
+          "body": "Done. Thanks for the suggestion.",
+          "line": 4087,
+          "original_line": 4090,
+          "position": 11,
+          "target_code": "@@ -4080,8 +4080,14 @@ def sort_values(\n \n         if is_range_indexer(sorted_index, len(sorted_index)):\n             if inplace:\n-                return self._update_inplace(self)\n-            return self.copy(deep=False)\n+                self._update_inplace(self)\n+                if ignore_index:\n+                    self.index = default_index(len(sorted_index))\n+                return None\n+            result = self.copy(deep=False)\n+            if ignore_index:\n+                result.index = default_index(len(sorted_index))\n+            return result",
+          "source": "review_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/tests/series/methods/test_sort_values.py",
+      "status": "modified",
+      "additions": 15,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-3",
+      "patch": "@@ -179,6 +179,21 @@ def test_sort_values_ignore_index(\n         tm.assert_series_equal(result_ser, expected)\n         tm.assert_series_equal(ser, Series(original_list))\n \n+    def test_sort_values_ignore_index_on_already_sorted(self):\n+        # GH 65833 - ignore_index had no effect on already sorted Series\n+        ser = Series([1, 2, 3], index=[2, 3, 4])\n+        expected = Series([1, 2, 3], index=[0, 1, 2])\n+        result = ser.sort_values(ignore_index=True)\n+        tm.assert_series_equal(result, expected)\n+\n+        ser2 = Series([1, 2, 3], index=[2, 3, 4])\n+        ser2.sort_values(ignore_index=True, inplace=True)\n+        tm.assert_series_equal(ser2, expected)\n+\n+        ser3 = Series([1, 2, 3], index=[2, 3, 4])\n+        result3 = ser3.sort_values(ignore_index=False)\n+        tm.assert_series_equal(result3, Series([1, 2, 3], index=[2, 3, 4]))\n+\n     def test_mergesort_descending_stability(self):\n         # GH 28697\n         s = Series([1, 2, 1, 3], [\"first\", \"b\", \"second\", \"c\"])",
+      "changed_code": "tm.assert_series_equal(result_ser, expected)\n        tm.assert_series_equal(ser, Series(original_list))\n\n    def test_sort_values_ignore_index_on_already_sorted(self):\n        # GH 65833 - ignore_index had no effect on already sorted Series\n        ser = Series([1, 2, 3], index=[2, 3, 4])\n        expected = Series([1, 2, 3], index=[0, 1, 2])\n        result = ser.sort_values(ignore_index=True)\n        tm.assert_series_equal(result, expected)\n\n        ser2 = Series([1, 2, 3], index=[2, 3, 4])\n        ser2.sort_values(ignore_index=True, inplace=True)\n        tm.assert_series_equal(ser2, expected)\n\n        ser3 = Series([1, 2, 3], index=[2, 3, 4])\n        result3 = ser3.sort_values(ignore_index=False)\n        tm.assert_series_equal(result3, Series([1, 2, 3], index=[2, 3, 4]))\n\n    def test_mergesort_descending_stability(self):\n        # GH 28697\n        s = Series([1, 2, 1, 3], [\"first\", \"b\", \"second\", \"c\"])",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3408129712,
+      "user": "rhshadrach",
+      "body": "I think we can make this a bit more DRY:\n\n```python\nif is_range_indexer(sorted_index, len(sorted_index)):\n  result = self if inplace else self.copy(deep=False)\n  if ignore_index: \n      result.index = default_index(len(sorted_index))\n  if inplace:\n      return None\n  return result\n```",
+      "path": "pandas/core/series.py",
+      "line": 4087,
+      "original_line": 4090,
+      "position": 11,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-2",
+      "target_code": "@@ -4080,8 +4080,14 @@ def sort_values(\n \n         if is_range_indexer(sorted_index, len(sorted_index)):\n             if inplace:\n-                return self._update_inplace(self)\n-            return self.copy(deep=False)\n+                self._update_inplace(self)\n+                if ignore_index:\n+                    self.index = default_index(len(sorted_index))\n+                return None\n+            result = self.copy(deep=False)\n+            if ignore_index:\n+                result.index = default_index(len(sorted_index))\n+            return result"
+    },
+    {
+      "id": 3408130016,
+      "user": "rhshadrach",
+      "body": "Can you move this to the reshaping section.",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 331,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-1",
+      "target_code": "@@ -328,8 +328,8 @@ Indexing\n - Bug in :meth:`Series.where` and :meth:`Series.mask` raising ``ValueError`` when ``other`` is a tuple on object-dtype :class:`Series` (:issue:`37681`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning an iterable to a single cell in an ``object`` dtype column incorrectly raised a ``ValueError`` (:issue:`57962`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning with duplicate column names and new columns corrupted unrelated columns (:issue:`58317`)\n+- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)"
+    },
+    {
+      "id": 3409069541,
+      "user": "rahul-COD3",
+      "body": "Moved it to Reshaping, thanks.",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 331,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-1",
+      "target_code": "@@ -328,8 +328,8 @@ Indexing\n - Bug in :meth:`Series.where` and :meth:`Series.mask` raising ``ValueError`` when ``other`` is a tuple on object-dtype :class:`Series` (:issue:`37681`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning an iterable to a single cell in an ``object`` dtype column incorrectly raised a ``ValueError`` (:issue:`57962`)\n - Fixed bug in :meth:`DataFrame.loc` where assigning with duplicate column names and new columns corrupted unrelated columns (:issue:`58317`)\n+- Fixed bug in :meth:`Series.sort_values` where ``ignore_index=True`` had no effect on an already-sorted Series (:issue:`65833`)"
+    },
+    {
+      "id": 3409070351,
+      "user": "rahul-COD3",
+      "body": "Done. Thanks for the suggestion.",
+      "path": "pandas/core/series.py",
+      "line": 4087,
+      "original_line": 4090,
+      "position": 11,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65836/files#diff-2",
+      "target_code": "@@ -4080,8 +4080,14 @@ def sort_values(\n \n         if is_range_indexer(sorted_index, len(sorted_index)):\n             if inplace:\n-                return self._update_inplace(self)\n-            return self.copy(deep=False)\n+                self._update_inplace(self)\n+                if ignore_index:\n+                    self.index = default_index(len(sorted_index))\n+                return None\n+            result = self.copy(deep=False)\n+            if ignore_index:\n+                result.index = default_index(len(sorted_index))\n+            return result"
+    },
+    {
+      "id": 4671154593,
+      "user": "rahul-COD3",
+      "body": "Added a test for the already-sorted case (`test_sort_values_ignore_index_on_already_sorted`) and a whatsnew entry for v3.1.0 under the Indexing section. All 13 tests pass.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4757454249,
+      "user": "rhshadrach",
+      "body": "Thanks @rahul-COD3!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

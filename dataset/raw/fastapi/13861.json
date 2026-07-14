@@ -1,0 +1,131 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 13861,
+  "title": "\ud83d\udc1b Fix `generate_unique_id` to produce consistent IDs for operations with multiple methods",
+  "description": "## Description\r\n[generate_unique_id](cci:1://file:///d:/Github/fastapi/fastapi/utils.py:178:0-183:23) picked `list(route.methods)[0]`, which depends on the internal,\r\nnon-deterministic order of a `set`.  \r\nThe resulting `operationId`s could oscillate between launches (e.g. `get_items_get`\r\nvs `get_items_post`), breaking caches and client generation.\r\n\r\nThe fix sorts the HTTP methods first and then selects the first value, ensuring a\r\nstable, predictable `operationId` across runs while preserving the original logic.",
+  "changed_files": [
+    {
+      "path": "fastapi/utils.py",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/13861/files#diff-1",
+      "patch": "@@ -179,8 +179,15 @@ def generate_operation_id_for_path(\n def generate_unique_id(route: \"APIRoute\") -> str:\n     operation_id = f\"{route.name}{route.path_format}\"\n     operation_id = re.sub(r\"\\W\", \"_\", operation_id)\n+    # Ensure deterministic generation of the operation_id\n+    # Sets are unordered, so converting directly to a list could give\n+    # different results between runs, causing unstable OpenAPI specs.\n+    # Sort the HTTP methods to guarantee a consistent order and pick the first\n+    # one. This keeps the original behaviour (choosing one method) while\n+    # making the result predictable.\n     assert route.methods\n-    operation_id = f\"{operation_id}_{list(route.methods)[0].lower()}\"\n+    method = sorted(route.methods)[0].lower()\n+    operation_id = f\"{operation_id}_{method}\"\n     return operation_id\n \n ",
+      "changed_code": "def generate_unique_id(route: \"APIRoute\") -> str:\n    operation_id = f\"{route.name}{route.path_format}\"\n    operation_id = re.sub(r\"\\W\", \"_\", operation_id)\n    # Ensure deterministic generation of the operation_id\n    # Sets are unordered, so converting directly to a list could give\n    # different results between runs, causing unstable OpenAPI specs.\n    # Sort the HTTP methods to guarantee a consistent order and pick the first\n    # one. This keeps the original behaviour (choosing one method) while\n    # making the result predictable.\n    assert route.methods\n    operation_id = f\"{operation_id}_{list(route.methods)[0].lower()}\"\n    method = sorted(route.methods)[0].lower()\n    operation_id = f\"{operation_id}_{method}\"\n    return operation_id",
+      "review_comments": [
+        {
+          "id": 3032291490,
+          "user": "YuriiMotov",
+          "body": "@mohiuddin-khan-shiam, thanks for your interest in FastAPI!\r\n\r\nI just found [similar PR](https://github.com/fastapi/fastapi/pull/4851). It was rejected with the reason:\r\n\r\n> Using multiple methods for the same function is not actually supported. @router.api_route() is there as a semi-internal utility, and because Starlette supports multiple methods, the interface is there. But the official way to do it in FastAPI and have all the FastAPI features (including the automatic OpenAPI integration, with operation IDs) is by using the dedicated methods, like app.post(), app.get(), etc.\r\n\r\nSo, the proposed solution is to avoid using `.api_route(\"/\", methods=[\"PUT\", \"POST\"])`. Use multiple decorators with single methods instead:\r\n\r\n```python\r\n@app.put(\"/\")\r\n@app.post(\"/\")\r\nasync def po() -> MyModel:\r\n    return {}\r\n```\r\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3047419269,
+          "user": "Pavanmanikanta98",
+          "body": "Hi @tiangolo, @YuriiMotov ,\r\n\r\nI've noticed that multiple users have created issues or PRs (like #4851 and #13861) related to using `@app.api_route()` or `@router.api_route()` with multiple HTTP methods (e.g., `methods=[\"POST\", \"PUT\"]`). These lead to non-deterministic `operationId`s and confusion around FastAPI's expected routing behavior.\r\n\r\nTo help reduce future duplicates and improve the DX (developer experience), I'd like to propose adding a **clear subsection in the documentation**, either under:\r\n\r\n- **\"Path Operation Decorators\"** (most ideal),\r\n- or **\"Dependencies in Path Operation Decorators\"**, if that's more appropriate.\r\n\r\nThis subsection would clarify that FastAPI **does not officially support multiple HTTP methods on a single function**, even if Starlette does. Instead, users should define each method with its own decorator.\r\n\r\nFor example:\r\n\r\n\u274c Don't do this:\r\n```python\r\n@app.api_route(\"/items/\", methods=[\"GET\", \"POST\"])\r\nasync def get_or_create_item():\r\n    ...\r\n```\r\n\r\n\u2705 Do this instead:\r\n```python\r\n@app.get(\"/items/\")\r\nasync def read_items():\r\n    return [{\"item_id\": \"Foo\"}]\r\n\r\n@app.post(\"/items/\")\r\nasync def create_item():\r\n    return {\"item_id\": \"Foo\", \"status\": \"created\"}\r\n\r\n```\r\nEven if both routes share logic, users can extract it into a helper function to stay consistent with FastAPI's OpenAPI handling.\r\n\r\nLet me know if you're open to a PR for this! I\u2019d be happy to contribute the exact wording and placement based on your preferences. \r\n\r\nThanks for the awesome framework \ud83d\ude4c",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3047502327,
+          "user": "YuriiMotov",
+          "body": "@Pavanmanikanta98, I think we need such PR. I can't guarantee it will be merged, but I will support it.\r\n\r\nJust one thing. I would implement the code example as one endpoint function with 2 path decorators.\r\n```python\r\n@app.put(\"/\")\r\n@app.post(\"/\")\r\nasync def po(request: Request):\r\n    if reques.method == \"PUT\":\r\n        # Do something\r\n    else:\r\n        # Do something else\r\n    return {}\r\n```\r\nI would also add docstring to `api_route` method with the warning and the link to the docs",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3102719769,
+          "user": "hozn",
+          "body": "I was about to submit the same PR, so I'm happy someone beat me to it :)\r\n\r\nIMO, the official recommendation of splitting into many methods is really ugly.  And this can be fixed with 1 line ....\r\n\r\nIn my case we have a diagnostic endpoint that supports GET/POST/PUT/DELETE/PATCH/OPTIONS/HEAD and there are detailed summary, description, examples for these.  Refactoring that into 7 methods that all have the same docs, etc. results in a lot of boilerplate code that is much more easily solved by just using the _public_ `api_route()` method.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3315083124,
+          "user": "tiangolo",
+          "body": "Thanks for the interest! But yes, `api_route` is not in the documentation, so it's not supported. It's only there because it's inherited from Starlette.\r\n\r\nBut this makes me thing maybe we could add a `@deprecated()` decorator to tell users not to use it and instead use the HTTP-method-specific decorators.\r\n\r\nFor now I'll pass on this, thanks! :coffee: ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3032291490,
+      "user": "YuriiMotov",
+      "body": "@mohiuddin-khan-shiam, thanks for your interest in FastAPI!\r\n\r\nI just found [similar PR](https://github.com/fastapi/fastapi/pull/4851). It was rejected with the reason:\r\n\r\n> Using multiple methods for the same function is not actually supported. @router.api_route() is there as a semi-internal utility, and because Starlette supports multiple methods, the interface is there. But the official way to do it in FastAPI and have all the FastAPI features (including the automatic OpenAPI integration, with operation IDs) is by using the dedicated methods, like app.post(), app.get(), etc.\r\n\r\nSo, the proposed solution is to avoid using `.api_route(\"/\", methods=[\"PUT\", \"POST\"])`. Use multiple decorators with single methods instead:\r\n\r\n```python\r\n@app.put(\"/\")\r\n@app.post(\"/\")\r\nasync def po() -> MyModel:\r\n    return {}\r\n```\r\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3047419269,
+      "user": "Pavanmanikanta98",
+      "body": "Hi @tiangolo, @YuriiMotov ,\r\n\r\nI've noticed that multiple users have created issues or PRs (like #4851 and #13861) related to using `@app.api_route()` or `@router.api_route()` with multiple HTTP methods (e.g., `methods=[\"POST\", \"PUT\"]`). These lead to non-deterministic `operationId`s and confusion around FastAPI's expected routing behavior.\r\n\r\nTo help reduce future duplicates and improve the DX (developer experience), I'd like to propose adding a **clear subsection in the documentation**, either under:\r\n\r\n- **\"Path Operation Decorators\"** (most ideal),\r\n- or **\"Dependencies in Path Operation Decorators\"**, if that's more appropriate.\r\n\r\nThis subsection would clarify that FastAPI **does not officially support multiple HTTP methods on a single function**, even if Starlette does. Instead, users should define each method with its own decorator.\r\n\r\nFor example:\r\n\r\n\u274c Don't do this:\r\n```python\r\n@app.api_route(\"/items/\", methods=[\"GET\", \"POST\"])\r\nasync def get_or_create_item():\r\n    ...\r\n```\r\n\r\n\u2705 Do this instead:\r\n```python\r\n@app.get(\"/items/\")\r\nasync def read_items():\r\n    return [{\"item_id\": \"Foo\"}]\r\n\r\n@app.post(\"/items/\")\r\nasync def create_item():\r\n    return {\"item_id\": \"Foo\", \"status\": \"created\"}\r\n\r\n```\r\nEven if both routes share logic, users can extract it into a helper function to stay consistent with FastAPI's OpenAPI handling.\r\n\r\nLet me know if you're open to a PR for this! I\u2019d be happy to contribute the exact wording and placement based on your preferences. \r\n\r\nThanks for the awesome framework \ud83d\ude4c",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3047502327,
+      "user": "YuriiMotov",
+      "body": "@Pavanmanikanta98, I think we need such PR. I can't guarantee it will be merged, but I will support it.\r\n\r\nJust one thing. I would implement the code example as one endpoint function with 2 path decorators.\r\n```python\r\n@app.put(\"/\")\r\n@app.post(\"/\")\r\nasync def po(request: Request):\r\n    if reques.method == \"PUT\":\r\n        # Do something\r\n    else:\r\n        # Do something else\r\n    return {}\r\n```\r\nI would also add docstring to `api_route` method with the warning and the link to the docs",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3102719769,
+      "user": "hozn",
+      "body": "I was about to submit the same PR, so I'm happy someone beat me to it :)\r\n\r\nIMO, the official recommendation of splitting into many methods is really ugly.  And this can be fixed with 1 line ....\r\n\r\nIn my case we have a diagnostic endpoint that supports GET/POST/PUT/DELETE/PATCH/OPTIONS/HEAD and there are detailed summary, description, examples for these.  Refactoring that into 7 methods that all have the same docs, etc. results in a lot of boilerplate code that is much more easily solved by just using the _public_ `api_route()` method.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3315083124,
+      "user": "tiangolo",
+      "body": "Thanks for the interest! But yes, `api_route` is not in the documentation, so it's not supported. It's only there because it's inherited from Starlette.\r\n\r\nBut this makes me thing maybe we could add a `@deprecated()` decorator to tell users not to use it and instead use the HTTP-method-specific decorators.\r\n\r\nFor now I'll pass on this, thanks! :coffee: ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

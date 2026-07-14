@@ -1,0 +1,139 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65606,
+  "title": "BUG: HDF5 pandas_version attr now reflects actual pandas version (GH-62792)",
+  "description": "- [x] closes #62792\n- [x] Tests added and passed if fixing a bug or adding a new feature\n- [x] All [code checks passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#pre-commit).\n- [ ] Added type annotations to new arguments/methods/functions.\n- [ ] Added an entry in the latest `doc/source/whatsnew/vX.X.X.rst` file if fixing a bug or adding a new feature.\n\n## Summary\n\nPreviously ``to_hdf`` always wrote the hardcoded string ``\"0.15.2\"`` to the HDF5 ``pandas_version`` attribute, regardless of the installed pandas version. The constant has been pinned since 2014 (GH-8793) and was effectively a stand-in for a storage-schema version, but the attribute name leads users to expect the actual pandas version \u2014 see GH-62792 and GH-19314.\n\nThis PR writes ``pd.__version__`` instead, and tightens the reader's version parser so the existing ``is_old_version`` check (which only triggers below ``0.10.1``) still works with version strings like ``\"3.1.0.dev0+abc\"`` or ``\"2.3.3rc1\"``.\n\nNo whatsnew entry \u2014 single-attribute behavior tweak, intentionally omitted.",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65606/files#diff-1",
+      "patch": "@@ -96,6 +96,7 @@ See :ref:`install.dependencies` and :ref:`install.optional_dependencies` for mor\n Other API changes\n ^^^^^^^^^^^^^^^^^\n - :meth:`.DataFrameGroupBy.sum` and :meth:`.DataFrameGroupBy.mean` on float dtypes with sorted grouping keys may differ from prior versions in the last few floating-point digits, due to a faster summation algorithm that does not use Kahan compensation (:issue:`65103`)\n+- :meth:`DataFrame.to_hdf` no longer writes a ``pandas_version`` attribute into the HDF5 file. The value was hardcoded to ``\"0.15.2\"`` and was only used internally to detect files written by pandas versions older than 0.10.1 (:issue:`62792`)\n - APIs that accept an ``engine=\"numba\"`` parameter with ``engine_kwargs`` will no longer pass through a ``nopython`` argument to ``numba.jit``. This argument has had no effect since numba 0.59.0 (:issue:`64483`).\n - Removed the ``freq`` and ``freqstr`` attributes from :class:`.DatetimeArray` and :class:`.TimedeltaArray`. Frequency is now stored only on :class:`DatetimeIndex` and :class:`TimedeltaIndex`; access ``Series.dt.freq`` or wrap the array in an Index to retrieve a frequency. The ``check_freq`` keyword on :func:`testing.assert_extension_array_equal` for these array types has also been removed (:issue:`24566`).\n -",
+      "changed_code": "Other API changes\n^^^^^^^^^^^^^^^^^\n- :meth:`.DataFrameGroupBy.sum` and :meth:`.DataFrameGroupBy.mean` on float dtypes with sorted grouping keys may differ from prior versions in the last few floating-point digits, due to a faster summation algorithm that does not use Kahan compensation (:issue:`65103`)\n- :meth:`DataFrame.to_hdf` no longer writes a ``pandas_version`` attribute into the HDF5 file. The value was hardcoded to ``\"0.15.2\"`` and was only used internally to detect files written by pandas versions older than 0.10.1 (:issue:`62792`)\n- APIs that accept an ``engine=\"numba\"`` parameter with ``engine_kwargs`` will no longer pass through a ``nopython`` argument to ``numba.jit``. This argument has had no effect since numba 0.59.0 (:issue:`64483`).\n- Removed the ``freq`` and ``freqstr`` attributes from :class:`.DatetimeArray` and :class:`.TimedeltaArray`. Frequency is now stored only on :class:`DatetimeIndex` and :class:`TimedeltaIndex`; access ``Series.dt.freq`` or wrap the array in an Index to retrieve a frequency. The ``check_freq`` keyword on :func:`testing.assert_extension_array_equal` for these array types has also been removed (:issue:`24566`).\n-",
+      "review_comments": [
+        {
+          "id": 4577526486,
+          "user": "mroeschke",
+          "body": "I think I would prefer if this metadata was just removed like suggested in https://github.com/pandas-dev/pandas/issues/62792#issuecomment-3436986703",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4579761187,
+          "user": "jbrockmendel",
+          "body": "Sure. Updated + green.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4604834375,
+          "user": "jbrockmendel",
+          "body": "updated + green",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4614759120,
+          "user": "mroeschke",
+          "body": "Thanks @jbrockmendel ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/io/pytables.py",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 90,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65606/files#diff-2",
+      "patch": "@@ -50,7 +50,6 @@\n from pandas.errors import (\n     AttributeConflictWarning,\n     ClosedFileError,\n-    IncompatibilityWarning,\n     Pandas4Warning,\n     PerformanceWarning,\n     PossibleDataLossError,\n@@ -119,7 +118,6 @@\n         Callable,\n         Hashable,\n         Iterator,\n-        Sequence,\n     )\n     from types import (\n         ModuleType,\n@@ -144,8 +142,6 @@\n \n     from pandas.core.internals import Block\n \n-# versioning attribute\n-_version = \"0.15.2\"\n \n # encoding\n _default_encoding = \"UTF-8\"\n@@ -201,12 +197,6 @@ def _ensure_term(where, scope_level: int):\n     return where if where is None or len(where) else None\n \n \n-incompatibility_doc: Final = \"\"\"\n-where criteria is being ignored as this version [%s] is too old (or\n-not-defined), read the file in and write it out to a new file to upgrade (with\n-the copy_to method)\n-\"\"\"\n-\n attribute_conflict_doc: Final = \"\"\"\n the [%s] attribute of the existing index is [%s] which conflicts with the new\n [%s], resetting the attribute to None\n@@ -3012,23 +3002,6 @@ def __init__(\n         self.encoding = _ensure_encoding(encoding)\n         self.errors = errors\n \n-    @property\n-    def is_old_version(self) -> bool:\n-        return self.version[0] <= 0 and self.version[1] <= 10 and self.version[2] < 1\n-\n-    @property\n-    def version(self) -> tuple[int, int, int]:\n-        \"\"\"compute and set our version\"\"\"\n-        version = getattr(self.group._v_attrs, \"pandas_version\", None)\n-        if isinstance(version, str):\n-            version_tup = tuple(int(x) for x in version.split(\".\"))\n-            if len(version_tup) == 2:\n-                version_tup = (*version_tup, 0)\n-            assert len(version_tup) == 3  # needed for mypy\n-            return version_tup\n-        else:\n-            return (0, 0, 0)\n-\n     @property\n     def pandas_type(self):\n         return getattr(self.group._v_attrs, \"pandas_type\", None)\n@@ -3045,9 +3018,8 @@ def __repr__(self) -> str:\n         return self.pandas_type\n \n     def set_object_info(self) -> None:\n-        \"\"\"set my pandas type & version\"\"\"\n+        \"\"\"set my pandas type\"\"\"\n         self.attrs.pandas_type = str(self.pandas_kind)\n-        self.attrs.pandas_version = str(_version)\n \n     def copy(self) -> Fixed:\n         new_self = copy.copy(self)\n@@ -3106,9 +3078,6 @@ def validate(self, other) -> Literal[True] | None:\n             return None\n         return True\n \n-    def validate_version(self, where=None) -> None:\n-        \"\"\"are we trying to operate on an old version?\"\"\"\n-\n     def infer_axes(self) -> bool:\n         \"\"\"\n         infer the axes of my storer\n@@ -3780,14 +3749,9 @@ def __repr__(self) -> str:\n         jdc = \",\".join(self.data_columns) if len(self.data_columns) else \"\"\n         dc = f\",dc->[{jdc}]\"\n \n-        ver = \"\"\n-        if self.is_old_version:\n-            jver = \".\".join([str(x) for x in self.version])\n-            ver = f\"[{jver}]\"\n-\n         jindex_axes = \",\".join([a.name for a in self.index_axes])\n         return (\n-            f\"{self.pandas_type:12.12}{ver} \"\n+            f\"{self.pandas_type:12.12} \"\n             f\"(typ->{self.table_type_short},nrows->{self.nrows},\"\n             f\"ncols->{self.ncols},indexers->[{jindex_axes}]{dc})\"\n         )\n@@ -3995,17 +3959,6 @@ def get_attrs(self) -> None:\n         self.index_axes = [a for a in self.indexables if a.is_an_indexable]\n         self.values_axes = [a for a in self.indexables if not a.is_an_indexable]\n \n-    def validate_version(self, where=None) -> None:\n-        \"\"\"are we trying to operate on an old version?\"\"\"\n-        if where is not None:\n-            if self.is_old_version:\n-                ws = incompatibility_doc % \".\".join([str(x) for x in self.version])\n-                warnings.warn(\n-                    ws,\n-                    IncompatibilityWarning,\n-                    stacklevel=find_stack_level(),\n-                )\n-\n     def validate_min_itemsize(self, min_itemsize) -> None:\n         \"\"\"\n         validate the min_itemsize doesn't contain items that are not in the\n@@ -4069,22 +4022,21 @@ def f(i, c: str) -> DataCol:\n                 klass = DataIndexableCol\n \n             atom = getattr(desc, c)\n-            adj_name = _maybe_adjust_name(c, self.version)\n \n             # TODO: why kind_attr here?\n-            values = getattr(table_attrs, f\"{adj_name}_kind\", None)\n-            dtype = getattr(table_attrs, f\"{adj_name}_dtype\", None)\n+            values = getattr(table_attrs, f\"{c}_kind\", None)\n+            dtype = getattr(table_attrs, f\"{c}_dtype\", None)\n             # Argument 1 to \"_dtype_to_kind\" has incompatible type\n             # \"Optional[Any]\"; expected \"str\"  [arg-type]\n             kind = _dtype_to_kind(dtype)  # type: ignore[arg-type]\n \n             md = self.read_metadata(c)\n             # TODO: figure out why these two versions of `meta` dont always match.\n             #  meta = \"category\" if md is not None else None\n-            meta = getattr(table_attrs, f\"{adj_name}_meta\", None)\n+            meta = getattr(table_attrs, f\"{c}_meta\", None)\n \n             obj = klass(\n-                name=adj_name,\n+                name=c,\n                 cname=c,\n                 values=values,\n                 kind=kind,\n@@ -4457,7 +4409,6 @@ def _create_axes(\n                 errors=self.errors,\n                 columns=b_items,\n             )\n-            adj_name = _maybe_adjust_name(new_name, self.version)\n \n             typ = klass._get_atom(data_converted)\n             kind = _dtype_to_kind(data_converted.dtype.name)\n@@ -4476,7 +4427,7 @@ def _create_axes(\n             data, dtype_name = _get_data_and_dtype_name(data_converted)\n \n             col = klass(\n-                name=adj_name,\n+                name=new_name,\n                 cname=new_name,\n                 values=list(b_items),\n                 typ=typ,\n@@ -4673,9 +4624,6 @@ def read_coordinates(\n         select coordinates (row numbers) from a table; return the\n         coordinates object\n         \"\"\"\n-        # validate the version\n-        self.validate_version(where)\n-\n         # infer the data kind\n         if not self.infer_axes():\n             return False\n@@ -4703,9 +4651,6 @@ def read_column(\n         return a single column from the table, generally only indexables\n         are interesting\n         \"\"\"\n-        # validate the version\n-        self.validate_version()\n-\n         # infer the data kind\n         if not self.infer_axes():\n             return False\n@@ -5023,9 +4968,6 @@ def read(\n         start: int | None = None,\n         stop: int | None = None,\n     ):\n-        # validate the version\n-        self.validate_version(where)\n-\n         # infer the data kind\n         if not self.infer_axes():\n             return None\n@@ -5647,31 +5589,6 @@ def _need_convert(kind: str) -> bool:\n     return False\n \n \n-def _maybe_adjust_name(name: str, version: Sequence[int]) -> str:\n-    \"\"\"\n-    Prior to 0.10.1, we named values blocks like: values_block_0 and the\n-    name values_0, adjust the given name if necessary.\n-\n-    Parameters\n-    ----------\n-    name : str\n-    version : Tuple[int, int, int]\n-\n-    Returns\n-    -------\n-    str\n-    \"\"\"\n-    if isinstance(version, str) or len(version) < 3:\n-        raise ValueError(\"Version is incorrect, expected sequence of 3 integers.\")\n-\n-    if version[0] == 0 and version[1] <= 10 and version[2] == 0:\n-        m = re.search(r\"values_block_(\\d+)\", name)\n-        if m:\n-            grp = m.groups()[0]\n-            name = f\"values_{grp}\"\n-    return name\n-\n-\n def _dtype_to_kind(dtype_str: str) -> str:\n     \"\"\"\n     Find the \"kind\" string describing the given dtype name.",
+      "changed_code": "from pandas.errors import (\n    AttributeConflictWarning,\n    ClosedFileError,\n    IncompatibilityWarning,\n    Pandas4Warning,\n    PerformanceWarning,\n    PossibleDataLossError,\n        Callable,\n        Hashable,\n        Iterator,\n        Sequence,\n    )\n    from types import (\n        ModuleType,\n\n    from pandas.core.internals import Block\n\n# versioning attribute\n_version = \"0.15.2\"\n\n# encoding\n_default_encoding = \"UTF-8\"\n    return where if where is None or len(where) else None\n\n\nincompatibility_doc: Final = \"\"\"\nwhere criteria is being ignored as this version [%s] is too old (or\nnot-defined), read the file in and write it out to a new file to upgrade (with\nthe copy_to method)\n\"\"\"\n\nattribute_conflict_doc: Final = \"\"\"\nthe [%s] attribute of the existing index is [%s] which conflicts with the new\n[%s], resetting the attribute to None\n        self.encoding = _ensure_encoding(encoding)\n        self.errors = errors\n\n    @property\n    def is_old_version(self) -> bool:\n        return self.version[0] <= 0 and self.version[1] <= 10 and self.version[2] < 1\n\n    @property\n    def version(self) -> tuple[int, int, int]:\n        \"\"\"compute and set our version\"\"\"\n        version = getattr(self.group._v_attrs, \"pandas_version\", None)\n        if isinstance(version, str):\n            version_tup = tuple(int(x) for x in version.split(\".\"))\n            if len(version_tup) == 2:\n                version_tup = (*version_tup, 0)\n            assert len(version_tup) == 3  # needed for mypy\n            return version_tup\n        else:\n            return (0, 0, 0)\n\n    @property\n    def pandas_type(self):\n        return getattr(self.group._v_attrs, \"pandas_type\", None)\n        return self.pandas_type\n\n    def set_object_info(self) -> None:\n        \"\"\"set my pandas type & version\"\"\"\n        \"\"\"set my pandas type\"\"\"\n        self.attrs.pandas_type = str(self.pandas_kind)\n        self.attrs.pandas_version = str(_version)\n\n    def copy(self) -> Fixed:\n        new_self = copy.copy(self)\n            return None\n        return True\n\n    def validate_version(self, where=None) -> None:\n        \"\"\"are we trying to operate on an old version?\"\"\"\n\n    def infer_axes(self) -> bool:\n        \"\"\"\n        infer the axes of my storer\n        jdc = \",\".join(self.data_columns) if len(self.data_columns) else \"\"\n        dc = f\",dc->[{jdc}]\"\n\n        ver = \"\"\n        if self.is_old_version:\n            jver = \".\".join([str(x) for x in self.version])\n            ver = f\"[{jver}]\"\n\n        jindex_axes = \",\".join([a.name for a in self.index_axes])\n        return (\n            f\"{self.pandas_type:12.12}{ver} \"\n            f\"{self.pandas_type:12.12} \"\n            f\"(typ->{self.table_type_short},nrows->{self.nrows},\"\n            f\"ncols->{self.ncols},indexers->[{jindex_axes}]{dc})\"\n        )\n        self.index_axes = [a for a in self.indexables if a.is_an_indexable]\n        self.values_axes = [a for a in self.indexables if not a.is_an_indexable]\n\n    def validate_version(self, where=None) -> None:\n        \"\"\"are we trying to operate on an old version?\"\"\"\n        if where is not None:\n            if self.is_old_version:\n                ws = incompatibility_doc % \".\".join([str(x) for x in self.version])\n                warnings.warn(\n                    ws,\n                    IncompatibilityWarning,\n                    stacklevel=find_stack_level(),\n                )\n\n    def validate_min_itemsize(self, min_itemsize) -> None:\n        \"\"\"\n        validate the min_itemsize doesn't contain items that are not in the\n                klass = DataIndexableCol\n\n            atom = getattr(desc, c)\n            adj_name = _maybe_adjust_name(c, self.version)\n\n            # TODO: why kind_attr here?\n            values = getattr(table_attrs, f\"{adj_name}_kind\", None)\n            dtype = getattr(table_attrs, f\"{adj_name}_dtype\", None)\n            values = getattr(table_attrs, f\"{c}_kind\", None)\n            dtype = getattr(table_attrs, f\"{c}_dtype\", None)\n            # Argument 1 to \"_dtype_to_kind\" has incompatible type\n            # \"Optional[Any]\"; expected \"str\"  [arg-type]\n            kind = _dtype_to_kind(dtype)  # type: ignore[arg-type]\n\n            md = self.read_metadata(c)\n            # TODO: figure out why these two versions of `meta` dont always match.\n            #  meta = \"category\" if md is not None else None\n            meta = getattr(table_attrs, f\"{adj_name}_meta\", None)\n            meta = getattr(table_attrs, f\"{c}_meta\", None)\n\n            obj = klass(\n                name=adj_name,\n                name=c,\n                cname=c,\n                values=values,\n                kind=kind,\n                errors=self.errors,\n                columns=b_items,\n            )\n            adj_name = _maybe_adjust_name(new_name, self.version)\n\n            typ = klass._get_atom(data_converted)\n            kind = _dtype_to_kind(data_converted.dtype.name)\n            data, dtype_name = _get_data_and_dtype_name(data_converted)\n\n            col = klass(\n                name=adj_name,\n                name=new_name,\n                cname=new_name,\n                values=list(b_items),\n                typ=typ,\n        select coordinates (row numbers) from a table; return the\n        coordinates object\n        \"\"\"\n        # validate the version\n        self.validate_version(where)\n\n        # infer the data kind\n        if not self.infer_axes():\n            return False\n        return a single column from the table, generally only indexables\n        are interesting\n        \"\"\"\n        # validate the version\n        self.validate_version()\n\n        # infer the data kind\n        if not self.infer_axes():\n            return False\n        start: int | None = None,\n        stop: int | None = None,\n    ):\n        # validate the version\n        self.validate_version(where)\n\n        # infer the data kind\n        if not self.infer_axes():\n            return None\n    return False\n\n\ndef _maybe_adjust_name(name: str, version: Sequence[int]) -> str:\n    \"\"\"\n    Prior to 0.10.1, we named values blocks like: values_block_0 and the\n    name values_0, adjust the given name if necessary.\n\n    Parameters\n    ----------\n    name : str\n    version : Tuple[int, int, int]\n\n    Returns\n    -------\n    str\n    \"\"\"\n    if isinstance(version, str) or len(version) < 3:\n        raise ValueError(\"Version is incorrect, expected sequence of 3 integers.\")\n\n    if version[0] == 0 and version[1] <= 10 and version[2] == 0:\n        m = re.search(r\"values_block_(\\d+)\", name)\n        if m:\n            grp = m.groups()[0]\n            name = f\"values_{grp}\"\n    return name\n\n\ndef _dtype_to_kind(dtype_str: str) -> str:\n    \"\"\"\n    Find the \"kind\" string describing the given dtype name.",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/tests/io/pytables/test_errors.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 11,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65606/files#diff-3",
+      "patch": "@@ -18,10 +18,7 @@\n     read_hdf,\n )\n \n-from pandas.io.pytables import (\n-    Term,\n-    _maybe_adjust_name,\n-)\n+from pandas.io.pytables import Term\n \n pytestmark = [pytest.mark.single_cpu]\n \n@@ -310,10 +307,3 @@ def test_read_hdf_generic_buffer_errors():\n     msg = \"Support for generic buffers has not been implemented.\"\n     with pytest.raises(NotImplementedError, match=msg):\n         read_hdf(BytesIO(b\"\"), \"df\")\n-\n-\n-@pytest.mark.parametrize(\"bad_version\", [(1, 2), (1,), [], \"12\", \"123\"])\n-def test_maybe_adjust_name_bad_version_raises(bad_version):\n-    msg = \"Version is incorrect, expected sequence of 3 integers\"\n-    with pytest.raises(ValueError, match=msg):\n-        _maybe_adjust_name(\"values_block_0\", version=bad_version)",
+      "changed_code": "read_hdf,\n)\n\nfrom pandas.io.pytables import (\n    Term,\n    _maybe_adjust_name,\n)\nfrom pandas.io.pytables import Term\n\npytestmark = [pytest.mark.single_cpu]\n\n    msg = \"Support for generic buffers has not been implemented.\"\n    with pytest.raises(NotImplementedError, match=msg):\n        read_hdf(BytesIO(b\"\"), \"df\")\n\n\n@pytest.mark.parametrize(\"bad_version\", [(1, 2), (1,), [], \"12\", \"123\"])\ndef test_maybe_adjust_name_bad_version_raises(bad_version):\n    msg = \"Version is incorrect, expected sequence of 3 integers\"\n    with pytest.raises(ValueError, match=msg):\n        _maybe_adjust_name(\"values_block_0\", version=bad_version)",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/tests/io/pytables/test_store.py",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 34,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65606/files#diff-4",
+      "patch": "@@ -205,40 +205,6 @@ def test_contains(temp_hdfstore):\n     assert \"node())\" in store\n \n \n-def test_versioning(temp_hdfstore):\n-    store = temp_hdfstore\n-    store[\"a\"] = Series(\n-        np.arange(10, dtype=np.float64), index=date_range(\"2020-01-01\", periods=10)\n-    )\n-    store[\"b\"] = DataFrame(\n-        1.1 * np.arange(120).reshape((30, 4)),\n-        columns=Index(list(\"ABCD\")),\n-        index=Index([f\"i-{i}\" for i in range(30)]),\n-    )\n-    df = DataFrame(\n-        np.random.default_rng(2).standard_normal((20, 4)),\n-        columns=Index(list(\"ABCD\")),\n-        index=date_range(\"2000-01-01\", periods=20, freq=\"B\"),\n-    )\n-    store.append(\"df1\", df[:10])\n-    store.append(\"df1\", df[10:])\n-    assert store.root.a._v_attrs.pandas_version == \"0.15.2\"\n-    assert store.root.b._v_attrs.pandas_version == \"0.15.2\"\n-    assert store.root.df1._v_attrs.pandas_version == \"0.15.2\"\n-\n-    # write a file and wipe its versioning\n-    store.append(\"df2\", df)\n-\n-    # this is an error because its table_type is appendable, but no\n-    # version info\n-    store.get_node(\"df2\")._v_attrs.pandas_version = None\n-\n-    msg = \"'NoneType' object has no attribute 'startswith'\"\n-\n-    with pytest.raises(Exception, match=msg):\n-        store.select(\"df2\")\n-\n-\n @pytest.mark.parametrize(\n     \"where, expected\",\n     [",
+      "changed_code": "assert \"node())\" in store\n\n\ndef test_versioning(temp_hdfstore):\n    store = temp_hdfstore\n    store[\"a\"] = Series(\n        np.arange(10, dtype=np.float64), index=date_range(\"2020-01-01\", periods=10)\n    )\n    store[\"b\"] = DataFrame(\n        1.1 * np.arange(120).reshape((30, 4)),\n        columns=Index(list(\"ABCD\")),\n        index=Index([f\"i-{i}\" for i in range(30)]),\n    )\n    df = DataFrame(\n        np.random.default_rng(2).standard_normal((20, 4)),\n        columns=Index(list(\"ABCD\")),\n        index=date_range(\"2000-01-01\", periods=20, freq=\"B\"),\n    )\n    store.append(\"df1\", df[:10])\n    store.append(\"df1\", df[10:])\n    assert store.root.a._v_attrs.pandas_version == \"0.15.2\"\n    assert store.root.b._v_attrs.pandas_version == \"0.15.2\"\n    assert store.root.df1._v_attrs.pandas_version == \"0.15.2\"\n\n    # write a file and wipe its versioning\n    store.append(\"df2\", df)\n\n    # this is an error because its table_type is appendable, but no\n    # version info\n    store.get_node(\"df2\")._v_attrs.pandas_version = None\n\n    msg = \"'NoneType' object has no attribute 'startswith'\"\n\n    with pytest.raises(Exception, match=msg):\n        store.select(\"df2\")\n\n\n@pytest.mark.parametrize(\n    \"where, expected\",\n    [",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 4577526486,
+      "user": "mroeschke",
+      "body": "I think I would prefer if this metadata was just removed like suggested in https://github.com/pandas-dev/pandas/issues/62792#issuecomment-3436986703",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4579761187,
+      "user": "jbrockmendel",
+      "body": "Sure. Updated + green.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4604834375,
+      "user": "jbrockmendel",
+      "body": "updated + green",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4614759120,
+      "user": "mroeschke",
+      "body": "Thanks @jbrockmendel ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

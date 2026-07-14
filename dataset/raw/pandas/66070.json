@@ -1,0 +1,129 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 66070,
+  "title": "BUG: anchor whole alternation in Series.str.match for PyArrow string dtype",
+  "description": "Striped a leading `^` from `pat` before wrapping with `^({pat})`, so the outer anchor applies to the whole alternation instead of just the first branch. \r\n\r\n- [X] closes #66069\r\n- [X] [Tests added and passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#writing-tests) if fixing a bug or adding a new feature\r\n- [X] All [code checks passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#pre-commit).\r\n- [X] Added [type annotations](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#type-hints) to new arguments/methods/functions.\r\n- [X] Added an entry in the latest `doc/source/whatsnew/vX.X.X.rst` file if fixing a bug or adding a new feature.\r\n- [X] I have reviewed and followed all the [contribution guidelines](https://pandas.pydata.org/docs/dev/development/contributing.html)\r\n- [ ] If I used AI to develop this pull request, I prompted it to follow `AGENTS.md`.\r\n",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.0.4.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/66070/files#diff-1",
+      "patch": "@@ -27,6 +27,7 @@ Bug fixes\n - Bug in :meth:`DataFrame.iloc` silently ignoring the assignment when setting values with an unordered or duplicated column indexer on a :class:`DataFrame` whose values are referenced by another object (:issue:`65446`)\n - Bug in :meth:`DataFrame.to_sql` and :func:`read_sql_table` when using an ADBC engine where table and schema names were not quoted as SQL identifiers, causing failures for identifiers containing spaces or reserved words, and making it vulnerable to SQL injection (:issue:`65065`)\n - Bug in :meth:`Series.str.__getitem__` raising ``AttributeError`` when underlying array is :class:`ArrowExtensionArray` (:issue:`65112`)\n+- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)\n \n \n .. ---------------------------------------------------------------------------",
+      "changed_code": "- Bug in :meth:`DataFrame.iloc` silently ignoring the assignment when setting values with an unordered or duplicated column indexer on a :class:`DataFrame` whose values are referenced by another object (:issue:`65446`)\n- Bug in :meth:`DataFrame.to_sql` and :func:`read_sql_table` when using an ADBC engine where table and schema names were not quoted as SQL identifiers, causing failures for identifiers containing spaces or reserved words, and making it vulnerable to SQL injection (:issue:`65065`)\n- Bug in :meth:`Series.str.__getitem__` raising ``AttributeError`` when underlying array is :class:`ArrowExtensionArray` (:issue:`65112`)\n- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)\n\n\n.. ---------------------------------------------------------------------------",
+      "review_comments": [
+        {
+          "id": 4822962499,
+          "user": "lumberbot-app[bot]",
+          "body": "Owee, I'm MrMeeseeks, Look at me.\n\nThere seem to be a conflict, please backport manually. Here are approximate instructions:\n\n1. Checkout backport branch and update it.\n\n```\ngit checkout 3.0.x\ngit pull\n```\n\n2. Cherry pick the first parent branch of the this PR on top of the older branch:\n```\ngit cherry-pick -x -m1 3d52407132956f43cc8a03e7e257d2ec75cec397\n```\n\n3. You will likely have some merge/cherry-pick conflict here, fix them and commit:\n\n```\ngit commit -am 'Backport PR #66070: BUG: anchor whole alternation in Series.str.match for PyArrow string dtype'\n```\n\n4. Push to a named branch:\n\n```\ngit push YOURFORK 3.0.x:auto-backport-of-pr-66070-on-3.0.x\n```\n\n5. Create a PR against branch 3.0.x, I would have named this PR:\n\n> \"Backport PR #66070 on branch 3.0.x (BUG: anchor whole alternation in Series.str.match for PyArrow string dtype)\"\n\nAnd apply the correct labels and milestones.\n\nCongratulations \u2014 you did some good work! Hopefully your backport PR will be tested by the continuous integration and merged soon!\n\nRemember to remove the `Still Needs Manual Backport` label once the PR gets merged.\n\nIf these instructions are inaccurate, feel free to [suggest an improvement](https://github.com/MeeseeksBox/MeeseeksDev).\n                ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4823011348,
+          "user": "jorisvandenbossche",
+          "body": "Manual backport -> https://github.com/pandas-dev/pandas/pull/66076\r\n\r\nThanks @gautamvarmadatla!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/arrays/_arrow_string_mixins.py",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 2,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/66070/files#diff-2",
+      "patch": "@@ -400,8 +400,9 @@ def _str_match(\n         flags: int = 0,\n         na: Scalar | lib.NoDefault = lib.no_default,\n     ):\n-        if not pat.startswith(\"^\"):\n-            pat = f\"^({pat})\"\n+        if pat.startswith(\"^\"):\n+            pat = pat[1:]\n+        pat = f\"^({pat})\"\n         return ArrowStringArrayMixin._str_contains(\n             self, pat, case, flags, na, regex=True\n         )",
+      "changed_code": "flags: int = 0,\n        na: Scalar | lib.NoDefault = lib.no_default,\n    ):\n        if not pat.startswith(\"^\"):\n            pat = f\"^({pat})\"\n        if pat.startswith(\"^\"):\n            pat = pat[1:]\n        pat = f\"^({pat})\"\n        return ArrowStringArrayMixin._str_contains(\n            self, pat, case, flags, na, regex=True\n        )",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/tests/strings/test_find_replace.py",
+      "status": "modified",
+      "additions": 15,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/66070/files#diff-3",
+      "patch": "@@ -1091,6 +1091,21 @@ def test_match(any_string_dtype):\n     tm.assert_series_equal(result, expected)\n \n \n+@pytest.mark.parametrize(\n+    \"pat\",\n+    [r\"^foo|bar\", r\"^bar|foo\", r\"^foo|bar$\", r\"^(foo)|bar\"],\n+)\n+def test_match_anchored_alternation(any_string_dtype, pat):\n+    # GH#66069\n+    ser = Series([\"xbar\", \"bar\", \"foo\", \"xfoo\"], dtype=any_string_dtype)\n+    result = ser.str.match(pat)\n+    expected_dtype = (\n+        np.bool_ if is_object_or_nan_string_dtype(any_string_dtype) else \"boolean\"\n+    )\n+    expected = Series([False, True, True, False], dtype=expected_dtype)\n+    tm.assert_series_equal(result, expected)\n+\n+\n def test_match_mixed_object():\n     mixed = Series(\n         [",
+      "changed_code": "tm.assert_series_equal(result, expected)\n\n\n@pytest.mark.parametrize(\n    \"pat\",\n    [r\"^foo|bar\", r\"^bar|foo\", r\"^foo|bar$\", r\"^(foo)|bar\"],\n)\ndef test_match_anchored_alternation(any_string_dtype, pat):\n    # GH#66069\n    ser = Series([\"xbar\", \"bar\", \"foo\", \"xfoo\"], dtype=any_string_dtype)\n    result = ser.str.match(pat)\n    expected_dtype = (\n        np.bool_ if is_object_or_nan_string_dtype(any_string_dtype) else \"boolean\"\n    )\n    expected = Series([False, True, True, False], dtype=expected_dtype)\n    tm.assert_series_equal(result, expected)\n\n\ndef test_match_mixed_object():\n    mixed = Series(\n        [",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3486897951,
+      "user": "jorisvandenbossche",
+      "body": "Can you move this to the 3.0.4 whatsnew?",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 310,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -307,6 +307,7 @@ Strings\n ^^^^^^^\n - Bug in :meth:`DataFrame.replace` with ``regex=True`` mutating the underlying :class:`StringArray` when the replacement value was not a string (:issue:`57733`)\n - Bug in :meth:`Series.memory_usage` with ``deep=True`` raising ``TypeError`` on PyPy for ``str`` dtype with Python storage (:issue:`46176`)\n+- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)"
+    },
+    {
+      "id": 3486911539,
+      "user": "gautamvarmadatla",
+      "body": "yeah sure! made the change :) ",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 310,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -307,6 +307,7 @@ Strings\n ^^^^^^^\n - Bug in :meth:`DataFrame.replace` with ``regex=True`` mutating the underlying :class:`StringArray` when the replacement value was not a string (:issue:`57733`)\n - Bug in :meth:`Series.memory_usage` with ``deep=True`` raising ``TypeError`` on PyPy for ``str`` dtype with Python storage (:issue:`46176`)\n+- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)"
+    },
+    {
+      "id": 3486915055,
+      "user": "gautamvarmadatla",
+      "body": "Also i think this is the same CI build error i saw last week ",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 310,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -307,6 +307,7 @@ Strings\n ^^^^^^^\n - Bug in :meth:`DataFrame.replace` with ``regex=True`` mutating the underlying :class:`StringArray` when the replacement value was not a string (:issue:`57733`)\n - Bug in :meth:`Series.memory_usage` with ``deep=True`` raising ``TypeError`` on PyPy for ``str`` dtype with Python storage (:issue:`46176`)\n+- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)"
+    },
+    {
+      "id": 3486949856,
+      "user": "jorisvandenbossche",
+      "body": "Yes, you can ignore the failing pyarrow nightly build ..",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 310,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -307,6 +307,7 @@ Strings\n ^^^^^^^\n - Bug in :meth:`DataFrame.replace` with ``regex=True`` mutating the underlying :class:`StringArray` when the replacement value was not a string (:issue:`57733`)\n - Bug in :meth:`Series.memory_usage` with ``deep=True`` raising ``TypeError`` on PyPy for ``str`` dtype with Python storage (:issue:`46176`)\n+- Bug in :meth:`Series.str.match` and :meth:`Index.str.match` on PyArrow-backed string dtypes where a leading ``^`` only anchored the first branch of an alternation pattern (e.g. ``r\"^foo|bar\"``) (:issue:`66069`)"
+    },
+    {
+      "id": 4822962499,
+      "user": "lumberbot-app[bot]",
+      "body": "Owee, I'm MrMeeseeks, Look at me.\n\nThere seem to be a conflict, please backport manually. Here are approximate instructions:\n\n1. Checkout backport branch and update it.\n\n```\ngit checkout 3.0.x\ngit pull\n```\n\n2. Cherry pick the first parent branch of the this PR on top of the older branch:\n```\ngit cherry-pick -x -m1 3d52407132956f43cc8a03e7e257d2ec75cec397\n```\n\n3. You will likely have some merge/cherry-pick conflict here, fix them and commit:\n\n```\ngit commit -am 'Backport PR #66070: BUG: anchor whole alternation in Series.str.match for PyArrow string dtype'\n```\n\n4. Push to a named branch:\n\n```\ngit push YOURFORK 3.0.x:auto-backport-of-pr-66070-on-3.0.x\n```\n\n5. Create a PR against branch 3.0.x, I would have named this PR:\n\n> \"Backport PR #66070 on branch 3.0.x (BUG: anchor whole alternation in Series.str.match for PyArrow string dtype)\"\n\nAnd apply the correct labels and milestones.\n\nCongratulations \u2014 you did some good work! Hopefully your backport PR will be tested by the continuous integration and merged soon!\n\nRemember to remove the `Still Needs Manual Backport` label once the PR gets merged.\n\nIf these instructions are inaccurate, feel free to [suggest an improvement](https://github.com/MeeseeksBox/MeeseeksDev).\n                ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4823011348,
+      "user": "jorisvandenbossche",
+      "body": "Manual backport -> https://github.com/pandas-dev/pandas/pull/66076\r\n\r\nThanks @gautamvarmadatla!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

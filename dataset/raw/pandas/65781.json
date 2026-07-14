@@ -1,0 +1,128 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65781,
+  "title": "BUG: to_hdf to a key deletes nested keys stored beneath it (GH-17267)",
+  "description": "closes #17267\n\nWriting a pandas object to an HDF5 key with `DataFrame.to_hdf` / `HDFStore.put` silently deleted any keys nested beneath that key:\n\n```python\npd.Series(np.zeros(20)).to_hdf(\"t.h5\", key=\"All/atest\")   # -> ['/All/atest']\npd.Series(np.zeros(10)).to_hdf(\"t.h5\", key=\"All\")         # -> ['/All']   <- /All/atest gone\n```\n\n`HDFStore._identify_group` overwrote an existing key by calling `remove_node(group, recursive=True)`, which nukes the entire subtree \u2014 including child keys, which are separate pandas objects. This is distinct from the documented recursive behavior of `HDFStore.remove` / `del store[key]` (those still work as documented); a plain `put` clobbering a sibling key is an unintended data-loss path.\n\nSince storers only ever write leaf nodes under their group (never child groups), any child *group* under a key is necessarily another key. The fix removes only the data nodes (and resets stale attributes) of the object stored at the target key when nested keys are present, leaving those keys intact. When there are no nested keys, the existing recursive-remove path is unchanged, so no orphan nodes are left behind on a normal overwrite.\n\nTested across fixed/table formats, repeated overwrites, and format/dtype changes of the parent key.",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65781/files#diff-1",
+      "patch": "@@ -370,6 +370,7 @@ I/O\n - Fixed bug in :func:`read_hdf` raising on files written by older pandas versions whose ``freq`` index attribute could not be decoded; the ``freq`` is now dropped with a warning instead of corrupting the index (:issue:`35917`)\n - Fixed bug in :func:`read_hdf` where a categorical column containing a category equal to the ``nan_rep`` string (e.g. the default ``\"nan\"``) raised ``ValueError: operands could not be broadcast together`` instead of reading that category back as ``NaN`` (:issue:`21741`)\n - Fixed bug in :func:`read_hdf` where the literal string ``\"nan\"`` in a string :class:`Index` was incorrectly converted to ``NaN`` on read, even when a custom ``nan_rep`` was supplied (:issue:`9604`)\n+- Fixed bug in :meth:`DataFrame.to_hdf` and :meth:`HDFStore.put` where writing an object to a key silently deleted any nested keys stored beneath it (:issue:`17267`)\n - Fixed bug in :meth:`DataFrame.to_hdf` raising ``TypeError`` when the index had a non-tick :class:`DateOffset` ``freq`` (e.g. ``DateOffset(years=1)``) (:issue:`45790`)\n - Fixed bug in :meth:`DataFrame.to_hdf` with ``format=\"table\"`` where a :class:`TimedeltaIndex` was reconstructed as a :class:`PeriodIndex` (when ``freq`` was set) or an integer :class:`Index` (otherwise) on read-back (:issue:`21466`)\n - Fixed bug in :meth:`HDFStore.get_storer` where ``.shape`` reported a phantom row for a fixed-format :class:`Series` or :class:`DataFrame` stored with no rows (:issue:`37235`)",
+      "changed_code": "- Fixed bug in :func:`read_hdf` raising on files written by older pandas versions whose ``freq`` index attribute could not be decoded; the ``freq`` is now dropped with a warning instead of corrupting the index (:issue:`35917`)\n- Fixed bug in :func:`read_hdf` where a categorical column containing a category equal to the ``nan_rep`` string (e.g. the default ``\"nan\"``) raised ``ValueError: operands could not be broadcast together`` instead of reading that category back as ``NaN`` (:issue:`21741`)\n- Fixed bug in :func:`read_hdf` where the literal string ``\"nan\"`` in a string :class:`Index` was incorrectly converted to ``NaN`` on read, even when a custom ``nan_rep`` was supplied (:issue:`9604`)\n- Fixed bug in :meth:`DataFrame.to_hdf` and :meth:`HDFStore.put` where writing an object to a key silently deleted any nested keys stored beneath it (:issue:`17267`)\n- Fixed bug in :meth:`DataFrame.to_hdf` raising ``TypeError`` when the index had a non-tick :class:`DateOffset` ``freq`` (e.g. ``DateOffset(years=1)``) (:issue:`45790`)\n- Fixed bug in :meth:`DataFrame.to_hdf` with ``format=\"table\"`` where a :class:`TimedeltaIndex` was reconstructed as a :class:`PeriodIndex` (when ``freq`` was set) or an integer :class:`Index` (otherwise) on read-back (:issue:`21466`)\n- Fixed bug in :meth:`HDFStore.get_storer` where ``.shape`` reported a phantom row for a fixed-format :class:`Series` or :class:`DataFrame` stored with no rows (:issue:`37235`)",
+      "review_comments": [
+        {
+          "id": 4754729994,
+          "user": "jbrockmendel",
+          "body": "If there are no further comments, I plan to merge next week.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4759256373,
+          "user": "mroeschke",
+          "body": "Thanks @jbrockmendel ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/io/pytables.py",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 2,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65781/files#diff-2",
+      "patch": "@@ -2393,8 +2393,30 @@ def _identify_group(self, key: str, append: bool) -> Node:\n \n         # remove the node if we are not appending\n         if group is not None and not append:\n-            self._handle.remove_node(group, recursive=True)\n-            group = None\n+            assert _table_mod is not None  # for mypy\n+            children = list(group._v_children.values())\n+            # a \"meta\" subgroup of a stored object holds its metadata (e.g.\n+            # categories for table-format categoricals), not a nested key\n+            is_stored_object = getattr(group._v_attrs, \"pandas_type\", None) is not None\n+            nested_keys = [\n+                child\n+                for child in children\n+                if isinstance(child, _table_mod.group.Group)\n+                and not (is_stored_object and child._v_name == \"meta\")\n+            ]\n+            if nested_keys:\n+                # GH#17267: the group has child keys nested underneath it, so a\n+                # recursive removal would silently delete them.  Remove only the\n+                # nodes of the object stored at this key and reset its\n+                # attributes, leaving the nested keys intact.\n+                for child in children:\n+                    if child not in nested_keys:\n+                        self._handle.remove_node(child, recursive=True)\n+                for attr_name in group._v_attrs._f_list(\"user\"):\n+                    delattr(group._v_attrs, attr_name)\n+            else:\n+                self._handle.remove_node(group, recursive=True)\n+                group = None\n \n         if group is None:\n             group = self._create_nodes_and_group(key)",
+      "changed_code": "# remove the node if we are not appending\n        if group is not None and not append:\n            self._handle.remove_node(group, recursive=True)\n            group = None\n            assert _table_mod is not None  # for mypy\n            children = list(group._v_children.values())\n            # a \"meta\" subgroup of a stored object holds its metadata (e.g.\n            # categories for table-format categoricals), not a nested key\n            is_stored_object = getattr(group._v_attrs, \"pandas_type\", None) is not None\n            nested_keys = [\n                child\n                for child in children\n                if isinstance(child, _table_mod.group.Group)\n                and not (is_stored_object and child._v_name == \"meta\")\n            ]\n            if nested_keys:\n                # GH#17267: the group has child keys nested underneath it, so a\n                # recursive removal would silently delete them.  Remove only the\n                # nodes of the object stored at this key and reset its\n                # attributes, leaving the nested keys intact.\n                for child in children:\n                    if child not in nested_keys:\n                        self._handle.remove_node(child, recursive=True)\n                for attr_name in group._v_attrs._f_list(\"user\"):\n                    delattr(group._v_attrs, attr_name)\n            else:\n                self._handle.remove_node(group, recursive=True)\n                group = None\n\n        if group is None:\n            group = self._create_nodes_and_group(key)",
+      "review_comments": [
+        {
+          "id": 3382705273,
+          "user": "mroeschke",
+          "body": "Just to confirm understanding, is this technically working around a bug/limitation in pytables?",
+          "line": 2396,
+          "original_line": 2127,
+          "position": 4,
+          "target_code": "@@ -2124,8 +2124,24 @@ def _identify_group(self, key: str, append: bool) -> Node:\n \n         # remove the node if we are not appending\n         if group is not None and not append:\n-            self._handle.remove_node(group, recursive=True)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3382887453,
+          "user": "jbrockmendel",
+          "body": "I think pytables is behaving as documented, its just on our end",
+          "line": 2396,
+          "original_line": 2127,
+          "position": 4,
+          "target_code": "@@ -2124,8 +2124,24 @@ def _identify_group(self, key: str, append: bool) -> Node:\n \n         # remove the node if we are not appending\n         if group is not None and not append:\n-            self._handle.remove_node(group, recursive=True)",
+          "source": "review_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/tests/io/pytables/test_put.py",
+      "status": "modified",
+      "additions": 52,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65781/files#diff-3",
+      "patch": "@@ -7,6 +7,7 @@\n \n import pandas as pd\n from pandas import (\n+    Categorical,\n     DataFrame,\n     HDFStore,\n     Index,\n@@ -124,6 +125,57 @@ def test_put(temp_hdfstore):\n     tm.assert_frame_equal(df[:10], store[\"c\"])\n \n \n+@pytest.mark.parametrize(\"format\", [\"fixed\", \"table\"])\n+def test_put_preserves_nested_keys(temp_hdfstore, format):\n+    # GH#17267 writing to a key must not delete keys nested beneath it\n+    store = temp_hdfstore\n+    child = Series(np.arange(20, dtype=np.float64))\n+    parent = Series(np.arange(10, dtype=np.float64))\n+\n+    store.put(\"All/atest\", child, format=format, track_times=False)\n+    store.put(\"All\", parent, format=format, track_times=False)\n+\n+    assert sorted(store.keys()) == [\"/All\", \"/All/atest\"]\n+    tm.assert_series_equal(store[\"All\"], parent)\n+    tm.assert_series_equal(store[\"All/atest\"], child)\n+\n+    # overwriting the parent again (now a real object with a nested key, and\n+    # changing dtype/shape) still leaves the nested key untouched\n+    new_parent = DataFrame({\"a\": range(3), \"b\": list(\"xyz\")})\n+    store.put(\"All\", new_parent, format=format, track_times=False)\n+\n+    assert sorted(store.keys()) == [\"/All\", \"/All/atest\"]\n+    tm.assert_frame_equal(store[\"All\"], new_parent)\n+    tm.assert_series_equal(store[\"All/atest\"], child)\n+\n+\n+@pytest.mark.parametrize(\"nested_key\", [True, False])\n+def test_put_overwrite_categorical_table(temp_hdfstore, nested_key):\n+    # GH#17267 a table-format categorical stores its categories in a \"meta\"\n+    # subgroup; overwriting must replace it, not preserve it as a nested key\n+    store = temp_hdfstore\n+    child = Series(np.arange(3, dtype=np.float64))\n+    if nested_key:\n+        store.put(\"All/atest\", child, format=\"table\", track_times=False)\n+\n+    df1 = DataFrame({\"a\": Categorical([\"x\", \"y\", \"x\"])})\n+    store.put(\"All\", df1, format=\"table\", track_times=False)\n+    df2 = DataFrame({\"a\": Categorical([\"p\", \"q\", \"p\"])})\n+    store.put(\"All\", df2, format=\"table\", track_times=False)\n+\n+    tm.assert_frame_equal(store[\"All\"], df2)\n+    if nested_key:\n+        tm.assert_series_equal(store[\"All/atest\"], child)\n+\n+    # overwriting with a non-categorical object removes the stale metadata\n+    df3 = DataFrame({\"b\": range(3)})\n+    store.put(\"All\", df3, format=\"table\", track_times=False)\n+\n+    tm.assert_frame_equal(store[\"All\"], df3)\n+    expected = [\"/All\", \"/All/atest\"] if nested_key else [\"/All\"]\n+    assert sorted(store.keys()) == expected\n+\n+\n def test_put_string_index(temp_hdfstore):\n     store = temp_hdfstore\n     index = Index([f\"I am a very long string index: {i}\" for i in range(20)])",
+      "changed_code": "import pandas as pd\nfrom pandas import (\n    Categorical,\n    DataFrame,\n    HDFStore,\n    Index,\n    tm.assert_frame_equal(df[:10], store[\"c\"])\n\n\n@pytest.mark.parametrize(\"format\", [\"fixed\", \"table\"])\ndef test_put_preserves_nested_keys(temp_hdfstore, format):\n    # GH#17267 writing to a key must not delete keys nested beneath it\n    store = temp_hdfstore\n    child = Series(np.arange(20, dtype=np.float64))\n    parent = Series(np.arange(10, dtype=np.float64))\n\n    store.put(\"All/atest\", child, format=format, track_times=False)\n    store.put(\"All\", parent, format=format, track_times=False)\n\n    assert sorted(store.keys()) == [\"/All\", \"/All/atest\"]\n    tm.assert_series_equal(store[\"All\"], parent)\n    tm.assert_series_equal(store[\"All/atest\"], child)\n\n    # overwriting the parent again (now a real object with a nested key, and\n    # changing dtype/shape) still leaves the nested key untouched\n    new_parent = DataFrame({\"a\": range(3), \"b\": list(\"xyz\")})\n    store.put(\"All\", new_parent, format=format, track_times=False)\n\n    assert sorted(store.keys()) == [\"/All\", \"/All/atest\"]\n    tm.assert_frame_equal(store[\"All\"], new_parent)\n    tm.assert_series_equal(store[\"All/atest\"], child)\n\n\n@pytest.mark.parametrize(\"nested_key\", [True, False])\ndef test_put_overwrite_categorical_table(temp_hdfstore, nested_key):\n    # GH#17267 a table-format categorical stores its categories in a \"meta\"\n    # subgroup; overwriting must replace it, not preserve it as a nested key\n    store = temp_hdfstore\n    child = Series(np.arange(3, dtype=np.float64))\n    if nested_key:\n        store.put(\"All/atest\", child, format=\"table\", track_times=False)\n\n    df1 = DataFrame({\"a\": Categorical([\"x\", \"y\", \"x\"])})\n    store.put(\"All\", df1, format=\"table\", track_times=False)\n    df2 = DataFrame({\"a\": Categorical([\"p\", \"q\", \"p\"])})\n    store.put(\"All\", df2, format=\"table\", track_times=False)\n\n    tm.assert_frame_equal(store[\"All\"], df2)\n    if nested_key:\n        tm.assert_series_equal(store[\"All/atest\"], child)\n\n    # overwriting with a non-categorical object removes the stale metadata\n    df3 = DataFrame({\"b\": range(3)})\n    store.put(\"All\", df3, format=\"table\", track_times=False)\n\n    tm.assert_frame_equal(store[\"All\"], df3)\n    expected = [\"/All\", \"/All/atest\"] if nested_key else [\"/All\"]\n    assert sorted(store.keys()) == expected\n\n\ndef test_put_string_index(temp_hdfstore):\n    store = temp_hdfstore\n    index = Index([f\"I am a very long string index: {i}\" for i in range(20)])",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3382705273,
+      "user": "mroeschke",
+      "body": "Just to confirm understanding, is this technically working around a bug/limitation in pytables?",
+      "path": "pandas/io/pytables.py",
+      "line": 2396,
+      "original_line": 2127,
+      "position": 4,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65781/files#diff-2",
+      "target_code": "@@ -2124,8 +2124,24 @@ def _identify_group(self, key: str, append: bool) -> Node:\n \n         # remove the node if we are not appending\n         if group is not None and not append:\n-            self._handle.remove_node(group, recursive=True)"
+    },
+    {
+      "id": 3382887453,
+      "user": "jbrockmendel",
+      "body": "I think pytables is behaving as documented, its just on our end",
+      "path": "pandas/io/pytables.py",
+      "line": 2396,
+      "original_line": 2127,
+      "position": 4,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65781/files#diff-2",
+      "target_code": "@@ -2124,8 +2124,24 @@ def _identify_group(self, key: str, append: bool) -> Node:\n \n         # remove the node if we are not appending\n         if group is not None and not append:\n-            self._handle.remove_node(group, recursive=True)"
+    },
+    {
+      "id": 4754729994,
+      "user": "jbrockmendel",
+      "body": "If there are no further comments, I plan to merge next week.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4759256373,
+      "user": "mroeschke",
+      "body": "Thanks @jbrockmendel ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

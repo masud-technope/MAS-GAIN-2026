@@ -1,0 +1,141 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14113,
+  "title": "\ud83d\udc1b Fix handle alias for query in pydantic model",
+  "description": "Fix for #12402\nDiscussion #12231\r\n\r\nCurrently `fastapi` did not handle an alias in a pydantic model properly.\r\n\r\nThis added the suggestion from https://github.com/fastapi/fastapi/issues/12402#issuecomment-2837809162 with a test.\r\n\r\nThanks @jannis701 for the suggestion.",
+  "changed_files": [
+    {
+      "path": "fastapi/dependencies/utils.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14113/files#diff-1",
+      "patch": "@@ -788,7 +788,7 @@ def request_params_to_args(\n                 )\n         value = _get_multidict_value(field, received_params, alias=alias)\n         if value is not None:\n-            params_to_process[field.name] = value\n+            params_to_process[field.alias] = value\n         processed_keys.add(alias or field.alias)\n         processed_keys.add(field.name)\n ",
+      "changed_code": ")\n        value = _get_multidict_value(field, received_params, alias=alias)\n        if value is not None:\n            params_to_process[field.name] = value\n            params_to_process[field.alias] = value\n        processed_keys.add(alias or field.alias)\n        processed_keys.add(field.name)",
+      "review_comments": [
+        {
+          "id": 3357106747,
+          "user": "YuriiMotov",
+          "body": "Let's keep it as draft until it's ready for review",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3357112017,
+          "user": "tonnico",
+          "body": "I will fix the test soon. Thanks for starting the pipeline.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3368844577,
+          "user": "tonnico",
+          "body": "@YuriiMotov The only broken test is a missing label on this PR. I'm looking forward to receiving a review.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3369275769,
+          "user": "YuriiMotov",
+          "body": "Just found https://github.com/fastapi/fastapi/pull/13203\r\nSo, this is a duplicate of #13203",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3369284551,
+          "user": "tonnico",
+          "body": "Oh yes. Good hit. I will close my PR. ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_query_single_model.py",
+      "status": "added",
+      "additions": 83,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14113/files#diff-2",
+      "patch": "@@ -0,0 +1,83 @@\n+from typing import List, Optional\n+\n+from dirty_equals import IsDict\n+from fastapi import FastAPI, Query\n+from fastapi.testclient import TestClient\n+from pydantic import BaseModel, Field\n+from typing_extensions import Annotated\n+\n+app = FastAPI()\n+\n+\n+class QueryModel(BaseModel):\n+    item: List[int] = []\n+    with_alias: Optional[str] = Field(alias=\"withAlias\", default=None)\n+    without_alias: str = \"default\"\n+\n+\n+@app.get(\"/query\")\n+def get_query(query: Annotated[QueryModel, Query()]):\n+    return query\n+\n+\n+client = TestClient(app)\n+\n+\n+def test_query():\n+    response = client.get(\n+        \"/query\",\n+        params={\n+            \"item\": [1, 2],\n+            \"withAlias\": \"abc123\",\n+            \"without_alias\": \"custom\",\n+        },\n+    )\n+    assert response.status_code == 200, response.text\n+    assert response.json() == {\n+        \"item\": [1, 2],\n+        \"withAlias\": \"abc123\",\n+        \"without_alias\": \"custom\",\n+    }\n+\n+\n+def test_defaults():\n+    response = client.get(\"/query\", params={\"item\": [1, 2]})\n+    assert response.status_code == 200, response.text\n+    assert response.json() == {\n+        \"item\": [1, 2],\n+        \"withAlias\": None,\n+        \"without_alias\": \"default\",\n+    }\n+\n+\n+def test_invalid_data():\n+    response = client.get(\n+        \"/query\",\n+        params={\n+            \"item\": [\"invalid\"],\n+        },\n+    )\n+    assert response.status_code == 422, response.text\n+    assert response.json() == IsDict(\n+        {\n+            \"detail\": [\n+                {\n+                    \"type\": \"int_parsing\",\n+                    \"loc\": [\"query\", \"item\", 0],\n+                    \"msg\": \"Input should be a valid integer, unable to parse string as an integer\",\n+                    \"input\": \"invalid\",\n+                }\n+            ]\n+        }\n+    ) | IsDict(\n+        # TODO: remove when deprecating Pydantic v1\n+        {\n+            \"detail\": [\n+                {\n+                    \"loc\": [\"query\", \"item\", 0],\n+                    \"msg\": \"value is not a valid integer\",\n+                    \"type\": \"type_error.integer\",\n+                }\n+            ]\n+        }\n+    )",
+      "changed_code": "from typing import List, Optional\n\nfrom dirty_equals import IsDict\nfrom fastapi import FastAPI, Query\nfrom fastapi.testclient import TestClient\nfrom pydantic import BaseModel, Field\nfrom typing_extensions import Annotated\n\napp = FastAPI()\n\n\nclass QueryModel(BaseModel):\n    item: List[int] = []\n    with_alias: Optional[str] = Field(alias=\"withAlias\", default=None)\n    without_alias: str = \"default\"\n\n\n@app.get(\"/query\")\ndef get_query(query: Annotated[QueryModel, Query()]):\n    return query\n\n\nclient = TestClient(app)\n\n\ndef test_query():\n    response = client.get(\n        \"/query\",\n        params={\n            \"item\": [1, 2],\n            \"withAlias\": \"abc123\",\n            \"without_alias\": \"custom\",\n        },\n    )\n    assert response.status_code == 200, response.text\n    assert response.json() == {\n        \"item\": [1, 2],\n        \"withAlias\": \"abc123\",\n        \"without_alias\": \"custom\",\n    }\n\n\ndef test_defaults():\n    response = client.get(\"/query\", params={\"item\": [1, 2]})\n    assert response.status_code == 200, response.text\n    assert response.json() == {\n        \"item\": [1, 2],\n        \"withAlias\": None,\n        \"without_alias\": \"default\",\n    }\n\n\ndef test_invalid_data():\n    response = client.get(\n        \"/query\",\n        params={\n            \"item\": [\"invalid\"],\n        },\n    )\n    assert response.status_code == 422, response.text\n    assert response.json() == IsDict(\n        {\n            \"detail\": [\n                {\n                    \"type\": \"int_parsing\",\n                    \"loc\": [\"query\", \"item\", 0],\n                    \"msg\": \"Input should be a valid integer, unable to parse string as an integer\",\n                    \"input\": \"invalid\",\n                }\n            ]\n        }\n    ) | IsDict(\n        # TODO: remove when deprecating Pydantic v1\n        {\n            \"detail\": [\n                {\n                    \"loc\": [\"query\", \"item\", 0],\n                    \"msg\": \"value is not a valid integer\",\n                    \"type\": \"type_error.integer\",\n                }\n            ]\n        }\n    )",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3357106747,
+      "user": "YuriiMotov",
+      "body": "Let's keep it as draft until it's ready for review",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3357112017,
+      "user": "tonnico",
+      "body": "I will fix the test soon. Thanks for starting the pipeline.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3368844577,
+      "user": "tonnico",
+      "body": "@YuriiMotov The only broken test is a missing label on this PR. I'm looking forward to receiving a review.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3369275769,
+      "user": "YuriiMotov",
+      "body": "Just found https://github.com/fastapi/fastapi/pull/13203\r\nSo, this is a duplicate of #13203",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3369284551,
+      "user": "tonnico",
+      "body": "Oh yes. Good hit. I will close my PR. ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

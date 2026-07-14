@@ -1,0 +1,127 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65786,
+  "title": "BUG: to_hdf fixed format ignored compression for object columns (GH-45286)",
+  "description": "closes #45286\n\n- [x] closes #45286\n- [x] Tests added and passed\n- [x] All [code checks passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html).\n- [x] Added an entry in the appropriate place in `doc/source/whatsnew/v3.1.0.rst`.\n\n`GenericFixed.write_array` (the `format=\"fixed\"` writer) stores `object`-dtype columns \u2014 the common case for string data \u2014 in a PyTables `VLArray`. That `create_vlarray` call was the only array-creation path in the method that did not pass `filters=self._filters`. Because the HDF5 file is opened without file-level filters, a `VLArray` created with no `filters` argument inherits `complevel=0`, so **string columns were never compressed in fixed format**, regardless of the `complib`/`complevel` passed to `to_hdf`. This is what produced the dramatic file-size blow-up in GH-45286 (reporter saw ~65x on string-heavy data).\n\nThe fix passes the store's filters through, matching the sibling `BaseStringArray` and numeric `carray` paths just above/below it.\n\nOn a synthetic frame shaped like the reporter's data (object-dtype string columns), saving per-key dropped the file from **114 MB \u2192 10.5 MB**.\n\nThe existing `test_complibs` only exercised numeric data (`np.ones`), so the `VLArray` path was never covered \u2014 hence the gap. The new `test_complib_object_dtype_compressed` writes an `object`-dtype column and asserts the resulting `VLArray` node carries the requested filter; it fails on `main` and passes with this change.\n\nNote: with pandas 3.0's default `str` dtype, `read_csv`-loaded strings now take the already-filtered `BaseStringArray` path, so today this only affects genuine `object`-dtype columns. The new test forces `object` dtype to lock in the fix.",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-1",
+      "patch": "@@ -353,6 +353,7 @@ I/O\n - Bug in :meth:`DataFrame.to_string` where ``formatters`` dict was applied to wrong columns when output was horizontally truncated via ``max_cols`` (:issue:`35410`)\n - Fixed :func:`read_json` with ``lines=True`` and ``nrows=0`` to return an empty DataFrame (:issue:`64025`)\n - :meth:`DataFrame.to_hdf` now raises a clear :class:`NotImplementedError` when writing a column or :class:`Index` of an unsupported extension dtype (such as :class:`IntervalDtype`, :class:`SparseDtype`, or the nullable integer/float/boolean dtypes), instead of a low-level ``AttributeError`` or PyTables ``TypeError`` (:issue:`26144`, :issue:`38305`, :issue:`42070`)\n+- :meth:`DataFrame.to_hdf` with ``format=\"fixed\"`` now compresses ``object`` dtype (e.g. string) columns when ``complib``/``complevel`` are given; previously the compression settings were silently ignored for these columns, producing much larger files (:issue:`45286`)\n - :meth:`HDFStore.select` now raises a clear ``ValueError`` with a workaround, instead of an opaque ``too many inputs`` error, when a ``where`` expression has too many comparisons for a query against indexed columns (:issue:`39752`)\n - :meth:`HDFStore.select` now raises an informative ``NotImplementedError`` when a ``where`` clause contains an arithmetic expression such as ``\"(A % 3) == 0\"``, instead of an opaque PyTables ``TypeError``; arithmetic in ``where`` filters is not supported (:issue:`41100`)\n - Fixed ``MemoryError`` in :meth:`HDFStore.select` when iterating large tables with ``chunksize`` and no ``where`` filter (:issue:`15937`)",
+      "changed_code": "- Bug in :meth:`DataFrame.to_string` where ``formatters`` dict was applied to wrong columns when output was horizontally truncated via ``max_cols`` (:issue:`35410`)\n- Fixed :func:`read_json` with ``lines=True`` and ``nrows=0`` to return an empty DataFrame (:issue:`64025`)\n- :meth:`DataFrame.to_hdf` now raises a clear :class:`NotImplementedError` when writing a column or :class:`Index` of an unsupported extension dtype (such as :class:`IntervalDtype`, :class:`SparseDtype`, or the nullable integer/float/boolean dtypes), instead of a low-level ``AttributeError`` or PyTables ``TypeError`` (:issue:`26144`, :issue:`38305`, :issue:`42070`)\n- :meth:`DataFrame.to_hdf` with ``format=\"fixed\"`` now compresses ``object`` dtype (e.g. string) columns when ``complib``/``complevel`` are given; previously the compression settings were silently ignored for these columns, producing much larger files (:issue:`45286`)\n- :meth:`HDFStore.select` now raises a clear ``ValueError`` with a workaround, instead of an opaque ``too many inputs`` error, when a ``where`` expression has too many comparisons for a query against indexed columns (:issue:`39752`)\n- :meth:`HDFStore.select` now raises an informative ``NotImplementedError`` when a ``where`` clause contains an arithmetic expression such as ``\"(A % 3) == 0\"``, instead of an opaque PyTables ``TypeError``; arithmetic in ``where`` filters is not supported (:issue:`41100`)\n- Fixed ``MemoryError`` in :meth:`HDFStore.select` when iterating large tables with ``chunksize`` and no ``where`` filter (:issue:`15937`)",
+      "review_comments": [
+        {
+          "id": 4639582679,
+          "user": "mroeschke",
+          "body": "Thanks @jbrockmendel ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/io/pytables.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-2",
+      "patch": "@@ -3487,7 +3487,7 @@ def write_array(\n                     warnings.warn(ws, PerformanceWarning, stacklevel=find_stack_level())\n \n                 vlarr = self._handle.create_vlarray(\n-                    self.group, key, _tables().ObjectAtom()\n+                    self.group, key, _tables().ObjectAtom(), filters=self._filters\n                 )\n                 vlarr.append(value)\n ",
+      "changed_code": "warnings.warn(ws, PerformanceWarning, stacklevel=find_stack_level())\n\n                vlarr = self._handle.create_vlarray(\n                    self.group, key, _tables().ObjectAtom()\n                    self.group, key, _tables().ObjectAtom(), filters=self._filters\n                )\n                vlarr.append(value)",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/tests/io/pytables/test_file_handling.py",
+      "status": "modified",
+      "additions": 19,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-3",
+      "patch": "@@ -286,6 +286,25 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 100, dtype=object)}).astype(object)\n+    assert df[\"a\"].dtype == object\n+\n+    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n+    result = read_hdf(temp_h5_path, \"df\")\n+    tm.assert_frame_equal(result, df.astype(result.dtypes))\n+\n+    # the VLArray holding the object column must carry the requested filter\n+    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n+        node = h5table.get_node(\"/df/block0_values\")\n+        assert isinstance(node, tables.VLArray)\n+        assert node.filters.complevel == 9\n+        assert node.filters.complib == \"zlib\"\n+\n+\n @pytest.mark.skipif(\n     not is_platform_little_endian(), reason=\"reason platform is not little endian\"\n )",
+      "changed_code": "assert node.filters.complib == lib\n\n\ndef test_complib_object_dtype_compressed(temp_h5_path):\n    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n    # filter used to be dropped on that path, so string-heavy frames written\n    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n    df = DataFrame({\"a\": np.array([\"foo\"] * 100, dtype=object)}).astype(object)\n    assert df[\"a\"].dtype == object\n\n    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n    result = read_hdf(temp_h5_path, \"df\")\n    tm.assert_frame_equal(result, df.astype(result.dtypes))\n\n    # the VLArray holding the object column must carry the requested filter\n    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n        node = h5table.get_node(\"/df/block0_values\")\n        assert isinstance(node, tables.VLArray)\n        assert node.filters.complevel == 9\n        assert node.filters.complib == \"zlib\"\n\n\n@pytest.mark.skipif(\n    not is_platform_little_endian(), reason=\"reason platform is not little endian\"\n)",
+      "review_comments": [
+        {
+          "id": 3350462560,
+          "user": "mroeschke",
+          "body": "Can we use a `DataFrame` with less rows (like 100)?",
+          "line": null,
+          "original_line": 293,
+          "position": 1,
+          "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3350467566,
+          "user": "mroeschke",
+          "body": "```suggestion\n    assert os.path.getsize(temp_h5_path) < os.path.getsize(uncompressed)\n```\n\nSince we're not driving the compression, I just want to avoid asserting anything definitive about it.",
+          "line": null,
+          "original_line": 311,
+          "position": 1,
+          "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)\n+    assert df[\"a\"].dtype == object\n+\n+    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n+    result = read_hdf(temp_h5_path, \"df\")\n+    tm.assert_frame_equal(result, df.astype(result.dtypes))\n+\n+    # the VLArray holding the object column must carry the requested filter\n+    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n+        node = h5table.get_node(\"/df/block0_values\")\n+        assert isinstance(node, tables.VLArray)\n+        assert node.filters.complevel == 9\n+        assert node.filters.complib == \"zlib\"\n+\n+    # the highly repetitive column dominates the file, so compression must make\n+    # it dramatically smaller than the uncompressed version\n+    uncompressed = temp_h5_path.with_name(\"uncompressed.h5\")\n+    df.to_hdf(uncompressed, key=\"df\")\n+    assert os.path.getsize(temp_h5_path) * 10 < os.path.getsize(uncompressed)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3358264213,
+          "user": "jbrockmendel",
+          "body": "Updated + green",
+          "line": null,
+          "original_line": 311,
+          "position": 1,
+          "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)\n+    assert df[\"a\"].dtype == object\n+\n+    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n+    result = read_hdf(temp_h5_path, \"df\")\n+    tm.assert_frame_equal(result, df.astype(result.dtypes))\n+\n+    # the VLArray holding the object column must carry the requested filter\n+    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n+        node = h5table.get_node(\"/df/block0_values\")\n+        assert isinstance(node, tables.VLArray)\n+        assert node.filters.complevel == 9\n+        assert node.filters.complib == \"zlib\"\n+\n+    # the highly repetitive column dominates the file, so compression must make\n+    # it dramatically smaller than the uncompressed version\n+    uncompressed = temp_h5_path.with_name(\"uncompressed.h5\")\n+    df.to_hdf(uncompressed, key=\"df\")\n+    assert os.path.getsize(temp_h5_path) * 10 < os.path.getsize(uncompressed)",
+          "source": "review_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3350462560,
+      "user": "mroeschke",
+      "body": "Can we use a `DataFrame` with less rows (like 100)?",
+      "path": "pandas/tests/io/pytables/test_file_handling.py",
+      "line": null,
+      "original_line": 293,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-3",
+      "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)"
+    },
+    {
+      "id": 3350467566,
+      "user": "mroeschke",
+      "body": "```suggestion\n    assert os.path.getsize(temp_h5_path) < os.path.getsize(uncompressed)\n```\n\nSince we're not driving the compression, I just want to avoid asserting anything definitive about it.",
+      "path": "pandas/tests/io/pytables/test_file_handling.py",
+      "line": null,
+      "original_line": 311,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-3",
+      "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)\n+    assert df[\"a\"].dtype == object\n+\n+    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n+    result = read_hdf(temp_h5_path, \"df\")\n+    tm.assert_frame_equal(result, df.astype(result.dtypes))\n+\n+    # the VLArray holding the object column must carry the requested filter\n+    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n+        node = h5table.get_node(\"/df/block0_values\")\n+        assert isinstance(node, tables.VLArray)\n+        assert node.filters.complevel == 9\n+        assert node.filters.complib == \"zlib\"\n+\n+    # the highly repetitive column dominates the file, so compression must make\n+    # it dramatically smaller than the uncompressed version\n+    uncompressed = temp_h5_path.with_name(\"uncompressed.h5\")\n+    df.to_hdf(uncompressed, key=\"df\")\n+    assert os.path.getsize(temp_h5_path) * 10 < os.path.getsize(uncompressed)"
+    },
+    {
+      "id": 3358264213,
+      "user": "jbrockmendel",
+      "body": "Updated + green",
+      "path": "pandas/tests/io/pytables/test_file_handling.py",
+      "line": null,
+      "original_line": 311,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65786/files#diff-3",
+      "target_code": "@@ -286,6 +286,31 @@ def test_complibs(tmp_path, lvl, lib, request):\n                 assert node.filters.complib == lib\n \n \n+def test_complib_object_dtype_compressed(temp_h5_path):\n+    # GH#45286 object-dtype columns are stored in a VLArray; the compression\n+    # filter used to be dropped on that path, so string-heavy frames written\n+    # with format=\"fixed\" were never compressed regardless of complib/complevel.\n+    df = DataFrame({\"a\": np.array([\"foo\"] * 10_000, dtype=object)}).astype(object)\n+    assert df[\"a\"].dtype == object\n+\n+    df.to_hdf(temp_h5_path, key=\"df\", complib=\"zlib\", complevel=9)\n+    result = read_hdf(temp_h5_path, \"df\")\n+    tm.assert_frame_equal(result, df.astype(result.dtypes))\n+\n+    # the VLArray holding the object column must carry the requested filter\n+    with tables.open_file(temp_h5_path, mode=\"r\") as h5table:\n+        node = h5table.get_node(\"/df/block0_values\")\n+        assert isinstance(node, tables.VLArray)\n+        assert node.filters.complevel == 9\n+        assert node.filters.complib == \"zlib\"\n+\n+    # the highly repetitive column dominates the file, so compression must make\n+    # it dramatically smaller than the uncompressed version\n+    uncompressed = temp_h5_path.with_name(\"uncompressed.h5\")\n+    df.to_hdf(uncompressed, key=\"df\")\n+    assert os.path.getsize(temp_h5_path) * 10 < os.path.getsize(uncompressed)"
+    },
+    {
+      "id": 4639582679,
+      "user": "mroeschke",
+      "body": "Thanks @jbrockmendel ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

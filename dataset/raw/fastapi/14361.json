@@ -1,0 +1,119 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14361,
+  "title": "\ud83d\udc1b Avoid accessing non-existing \"$ref\" key for Pydantic v2 compat remapping",
+  "description": "cf Discussion #14265",
+  "changed_files": [
+    {
+      "path": "fastapi/_compat/v2.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14361/files#diff-1",
+      "patch": "@@ -304,7 +304,7 @@ def _remap_definitions_and_field_mappings(\n     old_name_to_new_name_map = {}\n     for field_key, schema in field_mapping.items():\n         model = field_key[0].type_\n-        if model not in model_name_map:\n+        if model not in model_name_map or \"$ref\" not in schema:\n             continue\n         new_name = model_name_map[model]\n         old_name = schema[\"$ref\"].split(\"/\")[-1]",
+      "changed_code": "old_name_to_new_name_map = {}\n    for field_key, schema in field_mapping.items():\n        model = field_key[0].type_\n        if model not in model_name_map:\n        if model not in model_name_map or \"$ref\" not in schema:\n            continue\n        new_name = model_name_map[model]\n        old_name = schema[\"$ref\"].split(\"/\")[-1]",
+      "review_comments": [
+        {
+          "id": 3572130781,
+          "user": "jerry-reevo",
+          "body": "For my case reported in https://github.com/fastapi/fastapi/discussions/14265 I am able to successfully generate an OpenAPI specification file without erroring out when using this branch of FastAPI.\r\n\r\nThanks!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3572916677,
+          "user": "svlandeg",
+          "body": "Thanks for reporting back, @jerry-reevo !",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3599377770,
+          "user": "tsmathis",
+          "body": "Just adding in, my team was also facing the same issue discussed in this PR which has kept us stuck at `fastapi==0.118.3`. This branch has seemed to resolved this issue for me (at least for local testing).",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3599576666,
+          "user": "zachary-walravens",
+          "body": "I can also confirm this PR fixes the issue for me. Thanks @svlandeg!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_schema_compat_pydantic_v2.py",
+      "status": "added",
+      "additions": 92,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14361/files#diff-2",
+      "patch": "@@ -0,0 +1,92 @@\n+import pytest\n+from fastapi import FastAPI\n+from fastapi.testclient import TestClient\n+from inline_snapshot import snapshot\n+from pydantic import BaseModel\n+\n+from tests.utils import needs_py310, needs_pydanticv2\n+\n+\n+@pytest.fixture(name=\"client\")\n+def get_client():\n+    from enum import Enum\n+\n+    app = FastAPI()\n+\n+    class PlatformRole(str, Enum):\n+        admin = \"admin\"\n+        user = \"user\"\n+\n+    class OtherRole(str, Enum): ...\n+\n+    class User(BaseModel):\n+        username: str\n+        role: PlatformRole | OtherRole\n+\n+    @app.get(\"/users\")\n+    async def get_user() -> User:\n+        return {\"username\": \"alice\", \"role\": \"admin\"}\n+\n+    client = TestClient(app)\n+    return client\n+\n+\n+@needs_py310\n+@needs_pydanticv2\n+def test_get(client: TestClient):\n+    response = client.get(\"/users\")\n+    assert response.json() == {\"username\": \"alice\", \"role\": \"admin\"}\n+\n+\n+@needs_py310\n+@needs_pydanticv2\n+def test_openapi_schema(client: TestClient):\n+    response = client.get(\"openapi.json\")\n+    assert response.json() == snapshot(\n+        {\n+            \"openapi\": \"3.1.0\",\n+            \"info\": {\"title\": \"FastAPI\", \"version\": \"0.1.0\"},\n+            \"paths\": {\n+                \"/users\": {\n+                    \"get\": {\n+                        \"summary\": \"Get User\",\n+                        \"operationId\": \"get_user_users_get\",\n+                        \"responses\": {\n+                            \"200\": {\n+                                \"description\": \"Successful Response\",\n+                                \"content\": {\n+                                    \"application/json\": {\n+                                        \"schema\": {\"$ref\": \"#/components/schemas/User\"}\n+                                    }\n+                                },\n+                            }\n+                        },\n+                    }\n+                }\n+            },\n+            \"components\": {\n+                \"schemas\": {\n+                    \"PlatformRole\": {\n+                        \"type\": \"string\",\n+                        \"enum\": [\"admin\", \"user\"],\n+                        \"title\": \"PlatformRole\",\n+                    },\n+                    \"User\": {\n+                        \"properties\": {\n+                            \"username\": {\"type\": \"string\", \"title\": \"Username\"},\n+                            \"role\": {\n+                                \"anyOf\": [\n+                                    {\"$ref\": \"#/components/schemas/PlatformRole\"},\n+                                    {\"enum\": [], \"title\": \"OtherRole\"},\n+                                ],\n+                                \"title\": \"Role\",\n+                            },\n+                        },\n+                        \"type\": \"object\",\n+                        \"required\": [\"username\", \"role\"],\n+                        \"title\": \"User\",\n+                    },\n+                }\n+            },\n+        }\n+    )",
+      "changed_code": "import pytest\nfrom fastapi import FastAPI\nfrom fastapi.testclient import TestClient\nfrom inline_snapshot import snapshot\nfrom pydantic import BaseModel\n\nfrom tests.utils import needs_py310, needs_pydanticv2\n\n\n@pytest.fixture(name=\"client\")\ndef get_client():\n    from enum import Enum\n\n    app = FastAPI()\n\n    class PlatformRole(str, Enum):\n        admin = \"admin\"\n        user = \"user\"\n\n    class OtherRole(str, Enum): ...\n\n    class User(BaseModel):\n        username: str\n        role: PlatformRole | OtherRole\n\n    @app.get(\"/users\")\n    async def get_user() -> User:\n        return {\"username\": \"alice\", \"role\": \"admin\"}\n\n    client = TestClient(app)\n    return client\n\n\n@needs_py310\n@needs_pydanticv2\ndef test_get(client: TestClient):\n    response = client.get(\"/users\")\n    assert response.json() == {\"username\": \"alice\", \"role\": \"admin\"}\n\n\n@needs_py310\n@needs_pydanticv2\ndef test_openapi_schema(client: TestClient):\n    response = client.get(\"openapi.json\")\n    assert response.json() == snapshot(\n        {\n            \"openapi\": \"3.1.0\",\n            \"info\": {\"title\": \"FastAPI\", \"version\": \"0.1.0\"},\n            \"paths\": {\n                \"/users\": {\n                    \"get\": {\n                        \"summary\": \"Get User\",\n                        \"operationId\": \"get_user_users_get\",\n                        \"responses\": {\n                            \"200\": {\n                                \"description\": \"Successful Response\",\n                                \"content\": {\n                                    \"application/json\": {\n                                        \"schema\": {\"$ref\": \"#/components/schemas/User\"}\n                                    }\n                                },\n                            }\n                        },\n                    }\n                }\n            },\n            \"components\": {\n                \"schemas\": {\n                    \"PlatformRole\": {\n                        \"type\": \"string\",\n                        \"enum\": [\"admin\", \"user\"],\n                        \"title\": \"PlatformRole\",\n                    },\n                    \"User\": {\n                        \"properties\": {\n                            \"username\": {\"type\": \"string\", \"title\": \"Username\"},\n                            \"role\": {\n                                \"anyOf\": [\n                                    {\"$ref\": \"#/components/schemas/PlatformRole\"},\n                                    {\"enum\": [], \"title\": \"OtherRole\"},\n                                ],\n                                \"title\": \"Role\",\n                            },\n                        },\n                        \"type\": \"object\",\n                        \"required\": [\"username\", \"role\"],\n                        \"title\": \"User\",\n                    },\n                }\n            },\n        }\n    )",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3572130781,
+      "user": "jerry-reevo",
+      "body": "For my case reported in https://github.com/fastapi/fastapi/discussions/14265 I am able to successfully generate an OpenAPI specification file without erroring out when using this branch of FastAPI.\r\n\r\nThanks!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3572916677,
+      "user": "svlandeg",
+      "body": "Thanks for reporting back, @jerry-reevo !",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3599377770,
+      "user": "tsmathis",
+      "body": "Just adding in, my team was also facing the same issue discussed in this PR which has kept us stuck at `fastapi==0.118.3`. This branch has seemed to resolved this issue for me (at least for local testing).",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3599576666,
+      "user": "zachary-walravens",
+      "body": "I can also confirm this PR fixes the issue for me. Thanks @svlandeg!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

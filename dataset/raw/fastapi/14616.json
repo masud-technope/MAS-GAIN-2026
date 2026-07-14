@@ -1,0 +1,249 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14616,
+  "title": "\ud83d\udc1b Fix using `Json[list[str]]` type (issue #10997)",
+  "description": "Fixes Form() not working with Pydantic `Json[T]` types when T is a sequence type (list, set, tuple).\r\n\r\nCloses #10997\r\n\r\nWhen using `Form()` with `Json[list[str]]`, FastAPI incorrectly treated it as a sequence field and used `getlist()`, wrapping the JSON string in a list. This caused Pydantic to fail parsing with:\r\n```\r\nTypeError: JSON input should be string, bytes or bytearray\r\n```\r\n\r\n**Before fix:**\r\n```python\r\n# Client sends\r\ndata = {\"items\": '[\"abc\", \"def\"]'}  # JSON string\r\n\r\n# FastAPI incorrectly does\r\nvalue = values.getlist(\"items\")  # ['[\"abc\", \"def\"]']  \u274c\r\n```\r\n\r\n**After fix:**\r\n```python\r\n# FastAPI correctly does\r\nvalue = values.get(\"items\")  # '[\"abc\", \"def\"]'  \u2705\r\n```\r\n\r\nThis fix enables legitimate use cases like file uploads with JSON metadata:\r\n\r\n```python\r\n@app.post(\"/upload\")\r\ndef upload(\r\n    file: UploadFile,\r\n    tags: Annotated[Json[list[str]], Form()]\r\n):\r\n    return {\"file\": file.filename, \"tags\": tags}\r\n```\r\n\r\nPydantic v1 support for `Json[T]` with `Form()` is not included in this PR because `metadata` attribute does not exist in Pydantic v1's `FieldInfo`.\r\n\r\n## Related\r\n- Issue #10997",
+  "changed_files": [
+    {
+      "path": "fastapi/dependencies/utils.py",
+      "status": "modified",
+      "additions": 10,
+      "deletions": 2,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14616/files#diff-1",
+      "patch": "@@ -51,7 +51,7 @@\n from fastapi.security.oauth2 import SecurityScopes\n from fastapi.types import DependencyCacheKey\n from fastapi.utils import create_model_field, get_path_param_names\n-from pydantic import BaseModel\n+from pydantic import BaseModel, Json\n from pydantic.fields import FieldInfo\n from starlette.background import BackgroundTasks as StarletteBackgroundTasks\n from starlette.concurrency import run_in_threadpool\n@@ -726,11 +726,19 @@ def _validate_value_with_model_field(\n         return v_, []\n \n \n+def _is_json_field(field: ModelField) -> bool:\n+    return any(type(item) is Json for item in field.field_info.metadata)\n+\n+\n def _get_multidict_value(\n     field: ModelField, values: Mapping[str, Any], alias: Union[str, None] = None\n ) -> Any:\n     alias = alias or get_validation_alias(field)\n-    if is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):\n+    if (\n+        (not _is_json_field(field))\n+        and is_sequence_field(field)\n+        and isinstance(values, (ImmutableMultiDict, Headers))\n+    ):\n         value = values.getlist(alias)\n     else:\n         value = values.get(alias, None)",
+      "changed_code": "from fastapi.security.oauth2 import SecurityScopes\nfrom fastapi.types import DependencyCacheKey\nfrom fastapi.utils import create_model_field, get_path_param_names\nfrom pydantic import BaseModel\nfrom pydantic import BaseModel, Json\nfrom pydantic.fields import FieldInfo\nfrom starlette.background import BackgroundTasks as StarletteBackgroundTasks\nfrom starlette.concurrency import run_in_threadpool\n        return v_, []\n\n\ndef _is_json_field(field: ModelField) -> bool:\n    return any(type(item) is Json for item in field.field_info.metadata)\n\n\ndef _get_multidict_value(\n    field: ModelField, values: Mapping[str, Any], alias: Union[str, None] = None\n) -> Any:\n    alias = alias or get_validation_alias(field)\n    if is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):\n    if (\n        (not _is_json_field(field))\n        and is_sequence_field(field)\n        and isinstance(values, (ImmutableMultiDict, Headers))\n    ):\n        value = values.getlist(alias)\n    else:\n        value = values.get(alias, None)",
+      "review_comments": [
+        {
+          "id": 2671161458,
+          "user": "YuriiMotov",
+          "body": "```suggestion\r\n    return any(isinstance(item, Json) for item in field.field_info.metadata)\r\n```\r\n\r\nFastAPI dropped the support of Pydantic V1 recently.\r\nWe can now simplify this.\r\nAlso, we should use `isinstance` to check type",
+          "line": null,
+          "original_line": 725,
+          "position": 1,
+          "target_code": "@@ -716,11 +716,22 @@ def _validate_value_with_model_field(\n         return v_, []\n \n \n+def _is_json_field(field: ModelField) -> bool:\n+    # Pydantic v1 FieldInfo doesn't have metadata attribute\n+    metadata = getattr(field.field_info, \"metadata\", [])\n+    return any(\n+        type(item).__name__ == \"Json\" and type(item).__module__ == \"pydantic.types\"\n+        for item in metadata\n+    )",
+          "source": "review_comment"
+        },
+        {
+          "id": 2671164364,
+          "user": "YuriiMotov",
+          "body": "```suggestion\r\n    if (\r\n        (not _is_json_field(field))\r\n        and is_sequence_field(field)\r\n        and isinstance(values, (ImmutableMultiDict, Headers))\r\n    ):\r\n```",
+          "line": null,
+          "original_line": 734,
+          "position": 1,
+          "target_code": "@@ -716,11 +716,22 @@ def _validate_value_with_model_field(\n         return v_, []\n \n \n+def _is_json_field(field: ModelField) -> bool:\n+    # Pydantic v1 FieldInfo doesn't have metadata attribute\n+    metadata = getattr(field.field_info, \"metadata\", [])\n+    return any(\n+        type(item).__name__ == \"Json\" and type(item).__module__ == \"pydantic.types\"\n+        for item in metadata\n+    )\n+\n+\n def _get_multidict_value(\n     field: ModelField, values: Mapping[str, Any], alias: Union[str, None] = None\n ) -> Any:\n     alias = alias or get_validation_alias(field)\n-    if is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):\n+    if _is_json_field(field):\n+        value = values.get(alias, None)\n+    elif is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):",
+          "source": "review_comment"
+        },
+        {
+          "id": 3694636868,
+          "user": "codspeed-hq[bot]",
+          "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/mkanetsuna%3Afix%2Fform-json-type-issue-10997?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging this PR will **not alter performance**\n\n<sub>Comparing <code>mkanetsuna:fix/form-json-type-issue-10997</code> (5f7fa6a) with <code>master</code> (9714558)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (54f8aee) during the generation of this report, so 9714558 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 20` untouched benchmarks  \n\n\n\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3723975710,
+          "user": "mkanetsuna",
+          "body": "@YuriiMotov Thanks for the suggestion! I've added tests for `Query()`, `Header()`, and `Cookie()` parameters.\r\nYou were right - this PR's fix works for all parameter types, not just Form(). \r\nAll tests are passing now, so please review again!\r\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3872910881,
+          "user": "YuriiMotov",
+          "body": "We missed one thing - we didn't check the openapi schema. And it's seems to be not good..\r\n\r\nWith the code example from the description of this PR, the related part of schema is:\r\n\r\n```json\r\n\"tags\": {\r\n  \"type\": \"string\",\r\n  \"contentMediaType\": \"application/json\",\r\n  \"contentSchema\": {\r\n      \"items\": {\r\n      \"type\": \"string\"\r\n      },\r\n      \"type\": \"array\"\r\n  },\r\n  \"title\": \"Tags\"\r\n}\r\n```\r\n\r\nAnd it's rendered by Swagger UI as file upload:\r\n\r\n---\r\n\r\n<img width=\"548\" height=\"381\" alt=\"image\" src=\"https://github.com/user-attachments/assets/15612af4-636b-4c44-ab97-1bb9f853ae04\" />\r\n\r\n---\r\n\r\nAnd, this is how Pydantic represents it.. So, not sure we can easily fix this..\r\n\r\nThe only way I can see is to use `WithJsonSchema`:\r\n\r\n```py\r\nfrom typing import Annotated\r\n\r\nfrom fastapi import FastAPI, Form\r\nfrom fastapi.datastructures import UploadFile\r\nfrom pydantic import Json, WithJsonSchema\r\n\r\napp = FastAPI()\r\n\r\n\r\n@app.post(\"/upload\")\r\ndef upload(\r\n    file: UploadFile,\r\n    tags: Annotated[Json[list[str]], Form(), WithJsonSchema({\"type\": \"string\"})],\r\n):\r\n    return {\"file\": file.filename, \"tags\": tags}\r\n```\r\n\r\nNow, Swagger UI renders it as just string input:\r\n\r\n---\r\n\r\n<img width=\"548\" height=\"381\" alt=\"image\" src=\"https://github.com/user-attachments/assets/efb99183-0187-482b-a3b8-dc1aaf3b6c9a\" />\r\n\r\n---\r\n\r\nBut if you attempt to send data as `[\"a\", \"b\"]`, it will fail. Swagger UI automatically pre-processes strings that look like arrays and it converts our input to just `a,b`:\r\n\r\n---\r\n\r\n<img width=\"597\" height=\"878\" alt=\"image\" src=\"https://github.com/user-attachments/assets/54eb225a-86c3-4d21-aa91-0f2be58d6f6e\" />\r\n\r\n---\r\n\r\nTo finally pass the value, you need to put it inside the double quotes and escape the quotes inside: `\"[\\\"a\\\", \\\"b\\\"]\"`\r\n\r\n---\r\n\r\n<img width=\"544\" height=\"743\" alt=\"image\" src=\"https://github.com/user-attachments/assets/273f7706-e7e7-4f1b-800f-74ab0e3d1c17\" />\r\n\r\n\r\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_json_type.py",
+      "status": "added",
+      "additions": 63,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14616/files#diff-2",
+      "patch": "@@ -0,0 +1,63 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-list\")\n+def cookie_json_list(items: Annotated[Json[list[str]], Cookie()]) -> list[str]:\n+    return items\n+\n+\n+client = TestClient(app)\n+\n+\n+def test_form_json_list():\n+    response = client.post(\n+        \"/form-json-list\", data={\"items\": json.dumps([\"abc\", \"def\"])}\n+    )\n+    assert response.status_code == 200, response.text\n+    assert response.json() == [\"abc\", \"def\"]\n+\n+\n+def test_query_json_list():\n+    response = client.get(\n+        \"/query-json-list\", params={\"items\": json.dumps([\"abc\", \"def\"])}\n+    )\n+    assert response.status_code == 200, response.text\n+    assert response.json() == [\"abc\", \"def\"]\n+\n+\n+def test_header_json_list():\n+    response = client.get(\n+        \"/header-json-list\", headers={\"x-items\": json.dumps([\"abc\", \"def\"])}\n+    )\n+    assert response.status_code == 200, response.text\n+    assert response.json() == [\"abc\", \"def\"]\n+\n+\n+def test_cookie_json_list():\n+    client.cookies.set(\"items\", json.dumps([\"abc\", \"def\"]))\n+    response = client.get(\"/cookie-json-list\")\n+    assert response.status_code == 200, response.text\n+    assert response.json() == [\"abc\", \"def\"]\n+    client.cookies.clear()",
+      "changed_code": "import json\nfrom typing import Annotated\n\nfrom fastapi import Cookie, FastAPI, Form, Header, Query\nfrom fastapi.testclient import TestClient\nfrom pydantic import Json\n\napp = FastAPI()\n\n\n@app.post(\"/form-json-list\")\ndef form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n    return items\n\n\n@app.get(\"/query-json-list\")\ndef query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n    return items\n\n\n@app.get(\"/header-json-list\")\ndef header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n    return x_items\n\n\n@app.get(\"/cookie-json-list\")\ndef cookie_json_list(items: Annotated[Json[list[str]], Cookie()]) -> list[str]:\n    return items\n\n\nclient = TestClient(app)\n\n\ndef test_form_json_list():\n    response = client.post(\n        \"/form-json-list\", data={\"items\": json.dumps([\"abc\", \"def\"])}\n    )\n    assert response.status_code == 200, response.text\n    assert response.json() == [\"abc\", \"def\"]\n\n\ndef test_query_json_list():\n    response = client.get(\n        \"/query-json-list\", params={\"items\": json.dumps([\"abc\", \"def\"])}\n    )\n    assert response.status_code == 200, response.text\n    assert response.json() == [\"abc\", \"def\"]\n\n\ndef test_header_json_list():\n    response = client.get(\n        \"/header-json-list\", headers={\"x-items\": json.dumps([\"abc\", \"def\"])}\n    )\n    assert response.status_code == 200, response.text\n    assert response.json() == [\"abc\", \"def\"]\n\n\ndef test_cookie_json_list():\n    client.cookies.set(\"items\", json.dumps([\"abc\", \"def\"]))\n    response = client.get(\"/cookie-json-list\")\n    assert response.status_code == 200, response.text\n    assert response.json() == [\"abc\", \"def\"]\n    client.cookies.clear()",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 2671161458,
+      "user": "YuriiMotov",
+      "body": "```suggestion\r\n    return any(isinstance(item, Json) for item in field.field_info.metadata)\r\n```\r\n\r\nFastAPI dropped the support of Pydantic V1 recently.\r\nWe can now simplify this.\r\nAlso, we should use `isinstance` to check type",
+      "path": "fastapi/dependencies/utils.py",
+      "line": null,
+      "original_line": 725,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14616/files#diff-1",
+      "target_code": "@@ -716,11 +716,22 @@ def _validate_value_with_model_field(\n         return v_, []\n \n \n+def _is_json_field(field: ModelField) -> bool:\n+    # Pydantic v1 FieldInfo doesn't have metadata attribute\n+    metadata = getattr(field.field_info, \"metadata\", [])\n+    return any(\n+        type(item).__name__ == \"Json\" and type(item).__module__ == \"pydantic.types\"\n+        for item in metadata\n+    )"
+    },
+    {
+      "id": 2671164364,
+      "user": "YuriiMotov",
+      "body": "```suggestion\r\n    if (\r\n        (not _is_json_field(field))\r\n        and is_sequence_field(field)\r\n        and isinstance(values, (ImmutableMultiDict, Headers))\r\n    ):\r\n```",
+      "path": "fastapi/dependencies/utils.py",
+      "line": null,
+      "original_line": 734,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14616/files#diff-1",
+      "target_code": "@@ -716,11 +716,22 @@ def _validate_value_with_model_field(\n         return v_, []\n \n \n+def _is_json_field(field: ModelField) -> bool:\n+    # Pydantic v1 FieldInfo doesn't have metadata attribute\n+    metadata = getattr(field.field_info, \"metadata\", [])\n+    return any(\n+        type(item).__name__ == \"Json\" and type(item).__module__ == \"pydantic.types\"\n+        for item in metadata\n+    )\n+\n+\n def _get_multidict_value(\n     field: ModelField, values: Mapping[str, Any], alias: Union[str, None] = None\n ) -> Any:\n     alias = alias or get_validation_alias(field)\n-    if is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):\n+    if _is_json_field(field):\n+        value = values.get(alias, None)\n+    elif is_sequence_field(field) and isinstance(values, (ImmutableMultiDict, Headers)):"
+    },
+    {
+      "id": 2671173246,
+      "user": "YuriiMotov",
+      "body": "```suggestion\r\n```\r\nI think we don't need this test",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 35,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,44 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import FastAPI, Form\n+from fastapi.testclient import TestClient\n+from pydantic import BaseModel, Json\n+\n+app = FastAPI()\n+\n+\n+class JsonListModel(BaseModel):\n+    json_list: Json[list[str]]\n+\n+\n+@app.post(\"/form-str\")\n+def form_str(json_list: Annotated[str, Form()]) -> list[str]:\n+    model = JsonListModel(json_list=json_list)  # type: ignore[arg-type]\n+    return model.json_list\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(json_list: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return json_list\n+\n+\n+client = TestClient(app)\n+\n+\n+def test_form_str():\n+    response = client.post(\n+        \"/form-str\",\n+        data={\"json_list\": json.dumps([\"abc\", \"def\"])},\n+    )\n+    assert response.status_code == 200, response.text\n+    assert response.json() == [\"abc\", \"def\"]"
+    },
+    {
+      "id": 2671174993,
+      "user": "YuriiMotov",
+      "body": "```suggestion\r\n```\r\nI think we don't need this",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 18,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,44 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import FastAPI, Form\n+from fastapi.testclient import TestClient\n+from pydantic import BaseModel, Json\n+\n+app = FastAPI()\n+\n+\n+class JsonListModel(BaseModel):\n+    json_list: Json[list[str]]\n+\n+\n+@app.post(\"/form-str\")\n+def form_str(json_list: Annotated[str, Form()]) -> list[str]:\n+    model = JsonListModel(json_list=json_list)  # type: ignore[arg-type]\n+    return model.json_list"
+    },
+    {
+      "id": 2672557835,
+      "user": "YuriiMotov",
+      "body": "Could you please explain why you used `dict` here, not `list`?\r\nWith `dict` this test passes on `master` branch.",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672658182,
+      "user": "mkanetsuna",
+      "body": "You're right! After investigating, I found that Cookie was never affected by the original bug, they skip `getlist()` path.\r\nI've removed the Cookie test. The three remaining tests (Form/Query/Header) properly cover the bug fix.\r\n",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672719941,
+      "user": "YuriiMotov",
+      "body": "I mean for Query you use `Json[list[str]]`, but for Cookie `Json[dict[str, str]]` (`list` vs `dict`).\r\n\r\nWhat if you declare cookie endpoint as:\r\n\r\n```py\r\n@app.get(\"/cookie-json-list\")\r\ndef cookie_json_list(\r\n    items: Annotated[Json[list[str]], Cookie()],\r\n) -> list[str]:\r\n    return items\r\n```\r\n?\r\n\r\nI think this should also fail on `master` branch and be fixed by this PR",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672758198,
+      "user": "mkanetsuna",
+      "body": "I thought the same, but when I tested on master, it passed \ud83d\ude36\r\n```bash\r\n==================================================================== test session starts ====================================================================\r\n...                                                                                                                    \r\ntests/test_form_json_type.py::test_form_json_list FAILED                                                                                              [ 25%]\r\ntests/test_form_json_type.py::test_query_json_list FAILED                                                                                             [ 50%]\r\ntests/test_form_json_type.py::test_header_json_list FAILED                                                                                            [ 75%]\r\ntests/test_form_json_type.py::test_cookie_json_list PASSED                                                                                            [100%]\r\n```\r\nLooks like cookies don't go through the getlist() path.\r\ncookie values are plain dict, not ImmutableMultiDict or Headers, so they skip that.",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672766740,
+      "user": "mkanetsuna",
+      "body": "u can check by using this\r\n```python\r\nimport json\r\nfrom typing import Annotated\r\n\r\nfrom fastapi import Cookie, FastAPI\r\nfrom fastapi.testclient import TestClient\r\nfrom pydantic import Json\r\n\r\napp = FastAPI()\r\n\r\n@app.get(\"/cookie-json-list\")\r\ndef cookie_json_list(\r\n    session: Annotated[Json[list[str]], Cookie()],\r\n) -> list[str]:\r\n    return session\r\n\r\n\r\nclient = TestClient(app)\r\n\r\n\r\ndef test_cookie_json_list():\r\n    client.cookies.set(\"session\", json.dumps([\"user\", \"test1\", \"role\", \"admin\"]))\r\n    response = client.get(\"/cookie-json-list\")\r\n    assert response.status_code == 200, response.text\r\n    assert response.json() == [\"user\", \"test1\", \"role\", \"admin\"]\r\n```",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672799428,
+      "user": "YuriiMotov",
+      "body": "Interesting... Thanks for clarifying this!\r\n\r\nI would still add this test with `Annotated[Json[list[str]], Cookie()]` for consistency.\r\nAnd, we need to update the name of test module to reflect that it's not only for `Form`",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672863403,
+      "user": "mkanetsuna",
+      "body": "Done! Added Cookie test consistent with other types and renamed the file to `test_json_type.py`.\r\n",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 2672884591,
+      "user": "YuriiMotov",
+      "body": "Great! Thank you!",
+      "path": "tests/test_form_json_type.py",
+      "line": null,
+      "original_line": 28,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -0,0 +1,64 @@\n+import json\n+from typing import Annotated\n+\n+from fastapi import Cookie, FastAPI, Form, Header, Query\n+from fastapi.testclient import TestClient\n+from pydantic import Json\n+\n+app = FastAPI()\n+\n+\n+@app.post(\"/form-json-list\")\n+def form_json_list(items: Annotated[Json[list[str]], Form()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/query-json-list\")\n+def query_json_list(items: Annotated[Json[list[str]], Query()]) -> list[str]:\n+    return items\n+\n+\n+@app.get(\"/header-json-list\")\n+def header_json_list(x_items: Annotated[Json[list[str]], Header()]) -> list[str]:\n+    return x_items\n+\n+\n+@app.get(\"/cookie-json-dict\")\n+def cookie_json_dict(\n+    session: Annotated[Json[dict[str, str]], Cookie()],"
+    },
+    {
+      "id": 3694636868,
+      "user": "codspeed-hq[bot]",
+      "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/mkanetsuna%3Afix%2Fform-json-type-issue-10997?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging this PR will **not alter performance**\n\n<sub>Comparing <code>mkanetsuna:fix/form-json-type-issue-10997</code> (5f7fa6a) with <code>master</code> (9714558)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (54f8aee) during the generation of this report, so 9714558 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 20` untouched benchmarks  \n\n\n\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3723975710,
+      "user": "mkanetsuna",
+      "body": "@YuriiMotov Thanks for the suggestion! I've added tests for `Query()`, `Header()`, and `Cookie()` parameters.\r\nYou were right - this PR's fix works for all parameter types, not just Form(). \r\nAll tests are passing now, so please review again!\r\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3872910881,
+      "user": "YuriiMotov",
+      "body": "We missed one thing - we didn't check the openapi schema. And it's seems to be not good..\r\n\r\nWith the code example from the description of this PR, the related part of schema is:\r\n\r\n```json\r\n\"tags\": {\r\n  \"type\": \"string\",\r\n  \"contentMediaType\": \"application/json\",\r\n  \"contentSchema\": {\r\n      \"items\": {\r\n      \"type\": \"string\"\r\n      },\r\n      \"type\": \"array\"\r\n  },\r\n  \"title\": \"Tags\"\r\n}\r\n```\r\n\r\nAnd it's rendered by Swagger UI as file upload:\r\n\r\n---\r\n\r\n<img width=\"548\" height=\"381\" alt=\"image\" src=\"https://github.com/user-attachments/assets/15612af4-636b-4c44-ab97-1bb9f853ae04\" />\r\n\r\n---\r\n\r\nAnd, this is how Pydantic represents it.. So, not sure we can easily fix this..\r\n\r\nThe only way I can see is to use `WithJsonSchema`:\r\n\r\n```py\r\nfrom typing import Annotated\r\n\r\nfrom fastapi import FastAPI, Form\r\nfrom fastapi.datastructures import UploadFile\r\nfrom pydantic import Json, WithJsonSchema\r\n\r\napp = FastAPI()\r\n\r\n\r\n@app.post(\"/upload\")\r\ndef upload(\r\n    file: UploadFile,\r\n    tags: Annotated[Json[list[str]], Form(), WithJsonSchema({\"type\": \"string\"})],\r\n):\r\n    return {\"file\": file.filename, \"tags\": tags}\r\n```\r\n\r\nNow, Swagger UI renders it as just string input:\r\n\r\n---\r\n\r\n<img width=\"548\" height=\"381\" alt=\"image\" src=\"https://github.com/user-attachments/assets/efb99183-0187-482b-a3b8-dc1aaf3b6c9a\" />\r\n\r\n---\r\n\r\nBut if you attempt to send data as `[\"a\", \"b\"]`, it will fail. Swagger UI automatically pre-processes strings that look like arrays and it converts our input to just `a,b`:\r\n\r\n---\r\n\r\n<img width=\"597\" height=\"878\" alt=\"image\" src=\"https://github.com/user-attachments/assets/54eb225a-86c3-4d21-aa91-0f2be58d6f6e\" />\r\n\r\n---\r\n\r\nTo finally pass the value, you need to put it inside the double quotes and escape the quotes inside: `\"[\\\"a\\\", \\\"b\\\"]\"`\r\n\r\n---\r\n\r\n<img width=\"544\" height=\"743\" alt=\"image\" src=\"https://github.com/user-attachments/assets/273f7706-e7e7-4f1b-800f-74ab0e3d1c17\" />\r\n\r\n\r\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

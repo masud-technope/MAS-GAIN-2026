@@ -1,0 +1,202 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65864,
+  "title": "BUG: iloc on DataFrame with reference is a silent no-op with unsorted indexes",
+  "description": "- [x] closes #65446 (Replace xxxx with the GitHub issue number)\r\n\r\nThis appears to me to be a somewhat severe bug - using iloc has no impact when there is another reference to the DataFrame.\r\n\r\n```python\r\ndf = pd.DataFrame({'A': [1, 2], 'B': [3, 4]})\r\nref = df[['A', 'B']]  # Create a reference\r\ndf.iloc[:, [1, 0]] = np.array([[10, 30], [20, 40]])\r\nprint(df)\r\n#    A  B\r\n# 0  1  3\r\n# 1  2  4\r\n```\r\n\r\nThe only thing that makes it not so severe is that the indices have to be not strictly increasing. I believe this was introduced in 2.1 with CoW enabled in https://github.com/pandas-dev/pandas/pull/51435 but haven't run a git bisect here.",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.0.4.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-1",
+      "patch": "@@ -21,6 +21,7 @@ Fixed regressions\n Bug fixes\n ~~~~~~~~~\n \n+- Bug in :meth:`DataFrame.iloc` silently ignoring the assignment when setting values with an unordered or duplicated column indexer on a :class:`DataFrame` whose values are referenced by another object (:issue:`65446`)\n - Bug in :meth:`Series.str.__getitem__` raising ``AttributeError`` when underlying array is :class:`ArrowExtensionArray` (:issue:`65112`)\n \n ",
+      "changed_code": "Bug fixes\n~~~~~~~~~\n\n- Bug in :meth:`DataFrame.iloc` silently ignoring the assignment when setting values with an unordered or duplicated column indexer on a :class:`DataFrame` whose values are referenced by another object (:issue:`65446`)\n- Bug in :meth:`Series.str.__getitem__` raising ``AttributeError`` when underlying array is :class:`ArrowExtensionArray` (:issue:`65112`)",
+      "review_comments": [
+        {
+          "id": 4693377462,
+          "user": "jbrockmendel",
+          "body": "claude found an existing bug that this changes to a different bug:\r\n\r\n```\r\ndf = pd.DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\r\nref = df[[\"A\", \"B\"]]      # hold a reference -> CoW path\r\ndf.iloc[[1, 0], [1, 0]] = 99\r\n```\r\n\r\non main the setitem is (incorrectly) a no-op.  Under this PR, it sets the diagonal elements when it should set all the elements.\r\n\r\nFine if you want to consider out of scope.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4702086515,
+          "user": "rhshadrach",
+          "body": "> claude found an existing bug that this changes to a different bug:\r\n\r\nThanks @jbrockmendel - fixed here. I think the whatsnew note is general enough it covers this case already.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4708441593,
+          "user": "jorisvandenbossche",
+          "body": "(CI failures are related to pytest 9.1, and I just merged a tmp pin that should resolve those)",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/internals/blocks.py",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-2",
+      "patch": "@@ -1614,6 +1614,8 @@ def delete(self, loc) -> list[Block]:\n         We split the block to avoid copying the underlying data. We create new\n         blocks for every connected segment of the initial block that is not deleted.\n         The new blocks point to the initial array.\n+\n+        Assumes `loc` is strictly increasing when list-like.\n         \"\"\"\n         if not is_list_like(loc):\n             loc = [loc]",
+      "changed_code": "We split the block to avoid copying the underlying data. We create new\n        blocks for every connected segment of the initial block that is not deleted.\n        The new blocks point to the initial array.\n\n        Assumes `loc` is strictly increasing when list-like.\n        \"\"\"\n        if not is_list_like(loc):\n            loc = [loc]",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/core/internals/managers.py",
+      "status": "modified",
+      "additions": 16,
+      "deletions": 3,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-3",
+      "patch": "@@ -573,6 +573,10 @@ def setitem(self, indexer, value) -> Self:\n \n                 values = self.blocks[0].values\n                 if values.ndim == 2:\n+                    # Block.delete in _iset_split_block requires sorted unique\n+                    # locs; inverse maps the requested column order onto the\n+                    # new block (GH#65446)\n+                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)\n                     values = values[blk_loc]\n                     # \"T\" has no attribute \"_iset_split_block\"\n                     self._iset_split_block(  # type: ignore[attr-defined]\n@@ -583,14 +587,23 @@ def setitem(self, indexer, value) -> Self:\n                     # first block equals values we are setting to -> set to all columns\n                     if lib.is_integer(indexer[1]):\n                         col_indexer = 0\n-                    elif len(blk_loc) > 1:\n+                    elif len(inverse) > 1 and lib.is_range_indexer(\n+                        inverse, len(blk_loc)\n+                    ):\n                         col_indexer = slice(None)  # type: ignore[assignment]\n                     else:\n-                        col_indexer = np.arange(len(blk_loc))  # type: ignore[assignment]\n+                        col_indexer = inverse  # type: ignore[assignment]\n                     indexer[1] = col_indexer\n \n                     row_indexer = indexer[0]\n-                    if isinstance(row_indexer, np.ndarray) and row_indexer.ndim == 2:\n+                    if isinstance(col_indexer, np.ndarray):\n+                        if (\n+                            isinstance(row_indexer, np.ndarray)\n+                            and row_indexer.ndim == 1\n+                        ):\n+                            # GH#65446: Make the row indexer 2d to take a cross product\n+                            row_indexer = row_indexer[:, None]\n+                    elif isinstance(row_indexer, np.ndarray) and row_indexer.ndim == 2:\n                         # numpy cannot handle a 2d indexer in combo with a slice\n                         row_indexer = np.squeeze(row_indexer, axis=1)\n                     if isinstance(row_indexer, np.ndarray) and len(row_indexer) == 0:",
+      "changed_code": "values = self.blocks[0].values\n                if values.ndim == 2:\n                    # Block.delete in _iset_split_block requires sorted unique\n                    # locs; inverse maps the requested column order onto the\n                    # new block (GH#65446)\n                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)\n                    values = values[blk_loc]\n                    # \"T\" has no attribute \"_iset_split_block\"\n                    self._iset_split_block(  # type: ignore[attr-defined]\n                    # first block equals values we are setting to -> set to all columns\n                    if lib.is_integer(indexer[1]):\n                        col_indexer = 0\n                    elif len(blk_loc) > 1:\n                    elif len(inverse) > 1 and lib.is_range_indexer(\n                        inverse, len(blk_loc)\n                    ):\n                        col_indexer = slice(None)  # type: ignore[assignment]\n                    else:\n                        col_indexer = np.arange(len(blk_loc))  # type: ignore[assignment]\n                        col_indexer = inverse  # type: ignore[assignment]\n                    indexer[1] = col_indexer\n\n                    row_indexer = indexer[0]\n                    if isinstance(row_indexer, np.ndarray) and row_indexer.ndim == 2:\n                    if isinstance(col_indexer, np.ndarray):\n                        if (\n                            isinstance(row_indexer, np.ndarray)\n                            and row_indexer.ndim == 1\n                        ):\n                            # GH#65446: Make the row indexer 2d to take a cross product\n                            row_indexer = row_indexer[:, None]\n                    elif isinstance(row_indexer, np.ndarray) and row_indexer.ndim == 2:\n                        # numpy cannot handle a 2d indexer in combo with a slice\n                        row_indexer = np.squeeze(row_indexer, axis=1)\n                    if isinstance(row_indexer, np.ndarray) and len(row_indexer) == 0:",
+      "review_comments": [
+        {
+          "id": 3404880755,
+          "user": "jbrockmendel",
+          "body": "do we have a lib.is_range_indexer is something like that we can use here?",
+          "line": null,
+          "original_line": 591,
+          "position": 1,
+          "target_code": "@@ -583,10 +587,12 @@ def setitem(self, indexer, value) -> Self:\n                     # first block equals values we are setting to -> set to all columns\n                     if lib.is_integer(indexer[1]):\n                         col_indexer = 0\n-                    elif len(blk_loc) > 1:\n+                    elif len(inverse) > 1 and np.array_equal(\n+                        inverse, np.arange(len(blk_loc))",
+          "source": "review_comment"
+        },
+        {
+          "id": 3405107592,
+          "user": "jorisvandenbossche",
+          "body": "```suggestion\n                    blk_loc_unique, inverse = np.unique(blk_loc, return_inverse=True)\n```\n\nSo we keep the original `blk_loc`? (eg I would assume the `values = values[blk_locs]` below needs to us the original blk_locs?",
+          "line": 579,
+          "original_line": 579,
+          "position": 7,
+          "target_code": "@@ -573,6 +573,10 @@ def setitem(self, indexer, value) -> Self:\n \n                 values = self.blocks[0].values\n                 if values.ndim == 2:\n+                    # Block.delete in _iset_split_block requires sorted unique\n+                    # locs; inverse maps the requested column order onto the\n+                    # new block (GH#65446)\n+                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3409654762,
+          "user": "rhshadrach",
+          "body": "No - the only invariant required is that `values` and `blk_locs` are consistent, and this is accomplished via `values = values[blk_locs]`. On the other hand, `Block.delete` in `_iset_split_block` requires `blk_locs` be strictly increasing.\n\nThis mutation of the input is undone via `inverse` and `col_indexer` below.",
+          "line": 579,
+          "original_line": 579,
+          "position": 7,
+          "target_code": "@@ -573,6 +573,10 @@ def setitem(self, indexer, value) -> Self:\n \n                 values = self.blocks[0].values\n                 if values.ndim == 2:\n+                    # Block.delete in _iset_split_block requires sorted unique\n+                    # locs; inverse maps the requested column order onto the\n+                    # new block (GH#65446)\n+                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3409709980,
+          "user": "rhshadrach",
+          "body": "Thanks - updated.",
+          "line": null,
+          "original_line": 591,
+          "position": 1,
+          "target_code": "@@ -583,10 +587,12 @@ def setitem(self, indexer, value) -> Self:\n                     # first block equals values we are setting to -> set to all columns\n                     if lib.is_integer(indexer[1]):\n                         col_indexer = 0\n-                    elif len(blk_loc) > 1:\n+                    elif len(inverse) > 1 and np.array_equal(\n+                        inverse, np.arange(len(blk_loc))",
+          "source": "review_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/tests/indexing/test_iloc.py",
+      "status": "modified",
+      "additions": 42,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-4",
+      "patch": "@@ -561,6 +561,48 @@ def test_iloc_setitem_frame_duplicate_columns_multiple_blocks(self):\n \n         tm.assert_frame_equal(df, expected)\n \n+    def test_iloc_setitem_unordered_column_indexer_referenced_block(self):\n+        # GH#65446 assignment was silently lost when the block was referenced\n+        #  by another object and the column indexer was not sorted\n+        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n+        df_orig = df.copy()\n+        ref = df[[\"A\", \"B\"]]\n+        df.iloc[:, [1, 0]] = DataFrame({\"A\": [10, 20], \"B\": [30, 40]})\n+        df._mgr._verify_integrity()\n+        expected = DataFrame({\"A\": [30, 40], \"B\": [10, 20]})\n+        tm.assert_frame_equal(df, expected)\n+        tm.assert_frame_equal(ref, df_orig)\n+\n+    def test_iloc_setitem_duplicate_column_indexer_referenced_block(self):\n+        # GH#65446\n+        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n+        df_orig = df.copy()\n+        ref = df[[\"A\", \"B\"]]\n+        df.iloc[:, [0, 0]] = np.array([[10, 30], [20, 40]])\n+        df._mgr._verify_integrity()\n+        expected = DataFrame({\"A\": [30, 40], \"B\": [3, 4]})\n+        tm.assert_frame_equal(df, expected)\n+        tm.assert_frame_equal(ref, df_orig)\n+\n+    def test_iloc_setitem_frame_swap_columns(self):\n+        # GH#65446 positional swap when the RHS shares data with the target\n+        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n+        df.iloc[:, [1, 0]] = df[[\"A\", \"B\"]]\n+        expected = DataFrame({\"A\": [3, 4], \"B\": [1, 2]})\n+        tm.assert_frame_equal(df, expected)\n+\n+    def test_iloc_setitem_unordered_row_and_column_indexer_referenced_block(self):\n+        # GH#65446 a list row indexer combined with an unsorted column indexer\n+        #  must set the full cross product\n+        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n+        df_orig = df.copy()\n+        ref = df[[\"A\", \"B\"]]\n+        df.iloc[[1, 0], [1, 0]] = np.array([[10, 20], [30, 40]])\n+        df._mgr._verify_integrity()\n+        expected = DataFrame({\"A\": [40, 20], \"B\": [30, 10]})\n+        tm.assert_frame_equal(df, expected)\n+        tm.assert_frame_equal(ref, df_orig)\n+\n     # TODO: GH#27620 this test used to compare iloc against ix; check if this\n     #  is redundant with another test comparing iloc against loc\n     def test_iloc_getitem_frame(self):",
+      "changed_code": "tm.assert_frame_equal(df, expected)\n\n    def test_iloc_setitem_unordered_column_indexer_referenced_block(self):\n        # GH#65446 assignment was silently lost when the block was referenced\n        #  by another object and the column indexer was not sorted\n        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n        df_orig = df.copy()\n        ref = df[[\"A\", \"B\"]]\n        df.iloc[:, [1, 0]] = DataFrame({\"A\": [10, 20], \"B\": [30, 40]})\n        df._mgr._verify_integrity()\n        expected = DataFrame({\"A\": [30, 40], \"B\": [10, 20]})\n        tm.assert_frame_equal(df, expected)\n        tm.assert_frame_equal(ref, df_orig)\n\n    def test_iloc_setitem_duplicate_column_indexer_referenced_block(self):\n        # GH#65446\n        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n        df_orig = df.copy()\n        ref = df[[\"A\", \"B\"]]\n        df.iloc[:, [0, 0]] = np.array([[10, 30], [20, 40]])\n        df._mgr._verify_integrity()\n        expected = DataFrame({\"A\": [30, 40], \"B\": [3, 4]})\n        tm.assert_frame_equal(df, expected)\n        tm.assert_frame_equal(ref, df_orig)\n\n    def test_iloc_setitem_frame_swap_columns(self):\n        # GH#65446 positional swap when the RHS shares data with the target\n        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n        df.iloc[:, [1, 0]] = df[[\"A\", \"B\"]]\n        expected = DataFrame({\"A\": [3, 4], \"B\": [1, 2]})\n        tm.assert_frame_equal(df, expected)\n\n    def test_iloc_setitem_unordered_row_and_column_indexer_referenced_block(self):\n        # GH#65446 a list row indexer combined with an unsorted column indexer\n        #  must set the full cross product\n        df = DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\n        df_orig = df.copy()\n        ref = df[[\"A\", \"B\"]]\n        df.iloc[[1, 0], [1, 0]] = np.array([[10, 20], [30, 40]])\n        df._mgr._verify_integrity()\n        expected = DataFrame({\"A\": [40, 20], \"B\": [30, 10]})\n        tm.assert_frame_equal(df, expected)\n        tm.assert_frame_equal(ref, df_orig)\n\n    # TODO: GH#27620 this test used to compare iloc against ix; check if this\n    #  is redundant with another test comparing iloc against loc\n    def test_iloc_getitem_frame(self):",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3404880755,
+      "user": "jbrockmendel",
+      "body": "do we have a lib.is_range_indexer is something like that we can use here?",
+      "path": "pandas/core/internals/managers.py",
+      "line": null,
+      "original_line": 591,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-3",
+      "target_code": "@@ -583,10 +587,12 @@ def setitem(self, indexer, value) -> Self:\n                     # first block equals values we are setting to -> set to all columns\n                     if lib.is_integer(indexer[1]):\n                         col_indexer = 0\n-                    elif len(blk_loc) > 1:\n+                    elif len(inverse) > 1 and np.array_equal(\n+                        inverse, np.arange(len(blk_loc))"
+    },
+    {
+      "id": 3405107592,
+      "user": "jorisvandenbossche",
+      "body": "```suggestion\n                    blk_loc_unique, inverse = np.unique(blk_loc, return_inverse=True)\n```\n\nSo we keep the original `blk_loc`? (eg I would assume the `values = values[blk_locs]` below needs to us the original blk_locs?",
+      "path": "pandas/core/internals/managers.py",
+      "line": 579,
+      "original_line": 579,
+      "position": 7,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-3",
+      "target_code": "@@ -573,6 +573,10 @@ def setitem(self, indexer, value) -> Self:\n \n                 values = self.blocks[0].values\n                 if values.ndim == 2:\n+                    # Block.delete in _iset_split_block requires sorted unique\n+                    # locs; inverse maps the requested column order onto the\n+                    # new block (GH#65446)\n+                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)"
+    },
+    {
+      "id": 3409654762,
+      "user": "rhshadrach",
+      "body": "No - the only invariant required is that `values` and `blk_locs` are consistent, and this is accomplished via `values = values[blk_locs]`. On the other hand, `Block.delete` in `_iset_split_block` requires `blk_locs` be strictly increasing.\n\nThis mutation of the input is undone via `inverse` and `col_indexer` below.",
+      "path": "pandas/core/internals/managers.py",
+      "line": 579,
+      "original_line": 579,
+      "position": 7,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-3",
+      "target_code": "@@ -573,6 +573,10 @@ def setitem(self, indexer, value) -> Self:\n \n                 values = self.blocks[0].values\n                 if values.ndim == 2:\n+                    # Block.delete in _iset_split_block requires sorted unique\n+                    # locs; inverse maps the requested column order onto the\n+                    # new block (GH#65446)\n+                    blk_loc, inverse = np.unique(blk_loc, return_inverse=True)"
+    },
+    {
+      "id": 3409709980,
+      "user": "rhshadrach",
+      "body": "Thanks - updated.",
+      "path": "pandas/core/internals/managers.py",
+      "line": null,
+      "original_line": 591,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65864/files#diff-3",
+      "target_code": "@@ -583,10 +587,12 @@ def setitem(self, indexer, value) -> Self:\n                     # first block equals values we are setting to -> set to all columns\n                     if lib.is_integer(indexer[1]):\n                         col_indexer = 0\n-                    elif len(blk_loc) > 1:\n+                    elif len(inverse) > 1 and np.array_equal(\n+                        inverse, np.arange(len(blk_loc))"
+    },
+    {
+      "id": 4693377462,
+      "user": "jbrockmendel",
+      "body": "claude found an existing bug that this changes to a different bug:\r\n\r\n```\r\ndf = pd.DataFrame({\"A\": [1, 2], \"B\": [3, 4]})\r\nref = df[[\"A\", \"B\"]]      # hold a reference -> CoW path\r\ndf.iloc[[1, 0], [1, 0]] = 99\r\n```\r\n\r\non main the setitem is (incorrectly) a no-op.  Under this PR, it sets the diagonal elements when it should set all the elements.\r\n\r\nFine if you want to consider out of scope.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4702086515,
+      "user": "rhshadrach",
+      "body": "> claude found an existing bug that this changes to a different bug:\r\n\r\nThanks @jbrockmendel - fixed here. I think the whatsnew note is general enough it covers this case already.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4708441593,
+      "user": "jorisvandenbossche",
+      "body": "(CI failures are related to pytest 9.1, and I just merged a tmp pin that should resolve those)",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

@@ -1,0 +1,233 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65656,
+  "title": "BUG: DataFrame.eval inconsistently handles duplicated columns",
+  "description": "- [x] closes #65588 (Replace xxxx with the GitHub issue number)\r\n- [x] [Tests added and passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#writing-tests) if fixing a bug or adding a new feature\r\n- [x] All [code checks passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#pre-commit).\r\n- [ ] Added [type annotations](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#type-hints) to new arguments/methods/functions.\r\n- [x] Added an entry in the latest `doc/source/whatsnew/vX.X.X.rst` file if fixing a bug or adding a new feature.\r\n- [x] I have reviewed and followed all the [contribution guidelines](https://pandas.pydata.org/docs/dev/development/contributing.html)\r\n- [x] If I used AI to develop this pull request, I prompted it to follow `AGENTS.md`.\r\n",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-1",
+      "patch": "@@ -394,6 +394,7 @@ Styler\n Other\n ^^^^^\n \n+- Bug in :meth:`DataFrame.eval` where a duplicate column name was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)\n - Bug in :meth:`Series.transform` and :meth:`DataFrame.transform` where passing a list of duplicate function names did not raise :class:`errors.SpecificationError` (:issue:`54929`)\n \n .. ***DO NOT USE THIS SECTION***",
+      "changed_code": "Other\n^^^^^\n\n- Bug in :meth:`DataFrame.eval` where a duplicate column name was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)\n- Bug in :meth:`Series.transform` and :meth:`DataFrame.transform` where passing a list of duplicate function names did not raise :class:`errors.SpecificationError` (:issue:`54929`)\n\n.. ***DO NOT USE THIS SECTION***",
+      "review_comments": [
+        {
+          "id": 3363579008,
+          "user": "jorisvandenbossche",
+          "body": "```suggestion\n- Bug in :meth:`DataFrame.eval` where a duplicate column name was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)\n```",
+          "line": null,
+          "original_line": 397,
+          "position": 1,
+          "target_code": "@@ -396,6 +394,7 @@ Styler\n Other\n ^^^^^\n \n+- Bug in :meth:`DataFrame.eval` where a column name appearing on multiple columns was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3377877339,
+          "user": "kjmin622",
+          "body": "@jorisvandenbossche I have reflected the suggested changes.",
+          "line": null,
+          "original_line": 397,
+          "position": 1,
+          "target_code": "@@ -396,6 +394,7 @@ Styler\n Other\n ^^^^^\n \n+- Bug in :meth:`DataFrame.eval` where a column name appearing on multiple columns was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)",
+          "source": "review_comment"
+        },
+        {
+          "id": 4668100561,
+          "user": "jorisvandenbossche",
+          "body": "Thanks @kjmin622 ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/generic.py",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 14,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-2",
+      "patch": "@@ -577,7 +577,7 @@ def _get_index_resolvers(self) -> dict[Hashable, Series | MultiIndex]:\n         return {clean_column_name(k): v for k, v in d.items() if not isinstance(k, int)}\n \n     @final\n-    def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n+    def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series | DataFrame]:\n         \"\"\"\n         Return the special character free column resolvers of a DataFrame.\n \n@@ -586,23 +586,11 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n         Used in :meth:`DataFrame.eval`.\n         \"\"\"\n         from pandas.core.computation.parsing import clean_column_name\n-        from pandas.core.series import Series\n \n         if isinstance(self, ABCSeries):\n             return {clean_column_name(self.name): self}\n \n-        dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        return {clean_column_name(k): self[k] for k in self.columns}\n \n     @final\n     @property",
+      "changed_code": "return {clean_column_name(k): v for k, v in d.items() if not isinstance(k, int)}\n\n    @final\n    def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n    def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series | DataFrame]:\n        \"\"\"\n        Return the special character free column resolvers of a DataFrame.\n\n        Used in :meth:`DataFrame.eval`.\n        \"\"\"\n        from pandas.core.computation.parsing import clean_column_name\n        from pandas.core.series import Series\n\n        if isinstance(self, ABCSeries):\n            return {clean_column_name(self.name): self}\n\n        dtypes = self.dtypes\n        return {\n            clean_column_name(k): Series(\n                v, copy=False, index=self.index, name=k, dtype=dtype\n            ).__finalize__(self)\n            for k, v, dtype in zip(\n                self.columns,\n                self._iter_column_arrays(),\n                dtypes,\n                strict=True,\n            )\n        }\n        return {clean_column_name(k): self[k] for k in self.columns}\n\n    @final\n    @property",
+      "review_comments": [
+        {
+          "id": 3328568885,
+          "user": "rhshadrach",
+          "body": "This was explicitly avoided in #56170, but perhaps that was just to avoid a warning which is no longer issued? cc @jorisvandenbossche \n\nIf this is safe, it should be safe when there aren't duplicates and then we can just do:\n\n```python\nresult = {\n    clean_column_name(k): self[k] for k in self.columns\n}\n```\n\nwhich I'm seeing is a bit faster than the current code.",
+          "line": null,
+          "original_line": 602,
+          "position": 1,
+          "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]",
+          "source": "review_comment"
+        },
+        {
+          "id": 3338276991,
+          "user": "kjmin622",
+          "body": "Applied your suggestions.",
+          "line": null,
+          "original_line": 602,
+          "position": 1,
+          "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]",
+          "source": "review_comment"
+        },
+        {
+          "id": 3363574193,
+          "user": "jorisvandenbossche",
+          "body": "Hmm, I don't remember the exact reason for the approach that was taken in https://github.com/pandas-dev/pandas/pull/56170 (I am also wondering now why that code was actually changed, i.e. why the original `.items()` was not sufficient in content of CoW)\r\n\r\nSo if all the tests are passing, this looks like a good approach",
+          "line": null,
+          "original_line": 602,
+          "position": 1,
+          "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]",
+          "source": "review_comment"
+        },
+        {
+          "id": 3363593703,
+          "user": "jorisvandenbossche",
+          "body": "(and the `.items()` has of course the same issue that it won't handle duplicated columns correctly, so it is not that we can go back to that if that would now work otherwise)",
+          "line": null,
+          "original_line": 602,
+          "position": 1,
+          "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]",
+          "source": "review_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/tests/frame/test_query_eval.py",
+      "status": "modified",
+      "additions": 17,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-3",
+      "patch": "@@ -170,6 +170,23 @@ def test_query_duplicate_column_name(self, engine, parser):\n \n         tm.assert_frame_equal(res, expect)\n \n+    def test_eval_duplicate_column_name(self, engine, parser):\n+        # GH#65588\n+        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n+            columns={\"b\": \"a\"}\n+        )\n+\n+        result_frame = df.eval(\"a == 1\", engine=engine, parser=parser)\n+        result_func = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n+\n+        expected = DataFrame(\n+            [[False, False], [True, False], [False, False]],\n+            columns=[\"a\", \"a\"],\n+        )\n+\n+        tm.assert_frame_equal(result_frame, expected)\n+        tm.assert_frame_equal(result_func, expected)\n+\n     def test_eval_resolvers_as_list(self):\n         # GH 14095\n         df = DataFrame(",
+      "changed_code": "tm.assert_frame_equal(res, expect)\n\n    def test_eval_duplicate_column_name(self, engine, parser):\n        # GH#65588\n        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n            columns={\"b\": \"a\"}\n        )\n\n        result_frame = df.eval(\"a == 1\", engine=engine, parser=parser)\n        result_func = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n\n        expected = DataFrame(\n            [[False, False], [True, False], [False, False]],\n            columns=[\"a\", \"a\"],\n        )\n\n        tm.assert_frame_equal(result_frame, expected)\n        tm.assert_frame_equal(result_func, expected)\n\n    def test_eval_resolvers_as_list(self):\n        # GH 14095\n        df = DataFrame(",
+      "review_comments": [
+        {
+          "id": 3328570248,
+          "user": "rhshadrach",
+          "body": "Can you do something like `result_frame = ...`, `result_func = ...`, and `expected = DataFrame(...)` to check the result is correct and not just consistent.",
+          "line": null,
+          "original_line": 182,
+          "position": 1,
+          "target_code": "@@ -170,6 +170,17 @@ def test_query_duplicate_column_name(self, engine, parser):\n \n         tm.assert_frame_equal(res, expect)\n \n+    def test_eval_duplicate_column_name(self, engine, parser):\n+        # GH#65588\n+        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n+            columns={\"b\": \"a\"}\n+        )\n+\n+        result = df.eval(\"a == 1\", engine=engine, parser=parser)\n+        expected = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n+\n+        tm.assert_frame_equal(result, expected)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3338270834,
+          "user": "kjmin622",
+          "body": "I've updated the test so that result_frame and result_func are each compared against an explicit expected DataFrame.",
+          "line": null,
+          "original_line": 182,
+          "position": 1,
+          "target_code": "@@ -170,6 +170,17 @@ def test_query_duplicate_column_name(self, engine, parser):\n \n         tm.assert_frame_equal(res, expect)\n \n+    def test_eval_duplicate_column_name(self, engine, parser):\n+        # GH#65588\n+        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n+            columns={\"b\": \"a\"}\n+        )\n+\n+        result = df.eval(\"a == 1\", engine=engine, parser=parser)\n+        expected = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n+\n+        tm.assert_frame_equal(result, expected)",
+          "source": "review_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3328568885,
+      "user": "rhshadrach",
+      "body": "This was explicitly avoided in #56170, but perhaps that was just to avoid a warning which is no longer issued? cc @jorisvandenbossche \n\nIf this is safe, it should be safe when there aren't duplicates and then we can just do:\n\n```python\nresult = {\n    clean_column_name(k): self[k] for k in self.columns\n}\n```\n\nwhich I'm seeing is a bit faster than the current code.",
+      "path": "pandas/core/generic.py",
+      "line": null,
+      "original_line": 602,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-2",
+      "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]"
+    },
+    {
+      "id": 3328570248,
+      "user": "rhshadrach",
+      "body": "Can you do something like `result_frame = ...`, `result_func = ...`, and `expected = DataFrame(...)` to check the result is correct and not just consistent.",
+      "path": "pandas/tests/frame/test_query_eval.py",
+      "line": null,
+      "original_line": 182,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-3",
+      "target_code": "@@ -170,6 +170,17 @@ def test_query_duplicate_column_name(self, engine, parser):\n \n         tm.assert_frame_equal(res, expect)\n \n+    def test_eval_duplicate_column_name(self, engine, parser):\n+        # GH#65588\n+        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n+            columns={\"b\": \"a\"}\n+        )\n+\n+        result = df.eval(\"a == 1\", engine=engine, parser=parser)\n+        expected = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n+\n+        tm.assert_frame_equal(result, expected)"
+    },
+    {
+      "id": 3338270834,
+      "user": "kjmin622",
+      "body": "I've updated the test so that result_frame and result_func are each compared against an explicit expected DataFrame.",
+      "path": "pandas/tests/frame/test_query_eval.py",
+      "line": null,
+      "original_line": 182,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-3",
+      "target_code": "@@ -170,6 +170,17 @@ def test_query_duplicate_column_name(self, engine, parser):\n \n         tm.assert_frame_equal(res, expect)\n \n+    def test_eval_duplicate_column_name(self, engine, parser):\n+        # GH#65588\n+        df = DataFrame({\"a\": range(3), \"b\": range(10, 13), \"c\": range(3)}).rename(\n+            columns={\"b\": \"a\"}\n+        )\n+\n+        result = df.eval(\"a == 1\", engine=engine, parser=parser)\n+        expected = pd.eval(\"a == 1\", resolvers=(df,), engine=engine, parser=parser)\n+\n+        tm.assert_frame_equal(result, expected)"
+    },
+    {
+      "id": 3338276991,
+      "user": "kjmin622",
+      "body": "Applied your suggestions.",
+      "path": "pandas/core/generic.py",
+      "line": null,
+      "original_line": 602,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-2",
+      "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]"
+    },
+    {
+      "id": 3363574193,
+      "user": "jorisvandenbossche",
+      "body": "Hmm, I don't remember the exact reason for the approach that was taken in https://github.com/pandas-dev/pandas/pull/56170 (I am also wondering now why that code was actually changed, i.e. why the original `.items()` was not sufficient in content of CoW)\r\n\r\nSo if all the tests are passing, this looks like a good approach",
+      "path": "pandas/core/generic.py",
+      "line": null,
+      "original_line": 602,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-2",
+      "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]"
+    },
+    {
+      "id": 3363579008,
+      "user": "jorisvandenbossche",
+      "body": "```suggestion\n- Bug in :meth:`DataFrame.eval` where a duplicate column name was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)\n```",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 397,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-1",
+      "target_code": "@@ -396,6 +394,7 @@ Styler\n Other\n ^^^^^\n \n+- Bug in :meth:`DataFrame.eval` where a column name appearing on multiple columns was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)"
+    },
+    {
+      "id": 3363593703,
+      "user": "jorisvandenbossche",
+      "body": "(and the `.items()` has of course the same issue that it won't handle duplicated columns correctly, so it is not that we can go back to that if that would now work otherwise)",
+      "path": "pandas/core/generic.py",
+      "line": null,
+      "original_line": 602,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-2",
+      "target_code": "@@ -592,17 +590,21 @@ def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:\n             return {clean_column_name(self.name): self}\n \n         dtypes = self.dtypes\n-        return {\n-            clean_column_name(k): Series(\n-                v, copy=False, index=self.index, name=k, dtype=dtype\n-            ).__finalize__(self)\n-            for k, v, dtype in zip(\n-                self.columns,\n-                self._iter_column_arrays(),\n-                dtypes,\n-                strict=True,\n-            )\n-        }\n+        result: dict[Hashable, Series | DataFrame] = {}\n+        for k, v, dtype in zip(\n+            self.columns,\n+            self._iter_column_arrays(),\n+            dtypes,\n+            strict=True,\n+        ):\n+            clean_key = clean_column_name(k)\n+            if clean_key in result:\n+                result[clean_key] = self[k]"
+    },
+    {
+      "id": 3377877339,
+      "user": "kjmin622",
+      "body": "@jorisvandenbossche I have reflected the suggested changes.",
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "line": null,
+      "original_line": 397,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65656/files#diff-1",
+      "target_code": "@@ -396,6 +394,7 @@ Styler\n Other\n ^^^^^\n \n+- Bug in :meth:`DataFrame.eval` where a column name appearing on multiple columns was resolved to a single column (yielding a :class:`Series`), inconsistent with :func:`pandas.eval` using ``resolvers=(df,)`` and with :meth:`DataFrame.__getitem__`, which include every column with that label (:issue:`65588`)"
+    },
+    {
+      "id": 4668100561,
+      "user": "jorisvandenbossche",
+      "body": "Thanks @kjmin622 ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

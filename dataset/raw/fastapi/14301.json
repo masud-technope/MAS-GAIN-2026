@@ -1,0 +1,97 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14301,
+  "title": "\ud83d\udc1b Fix `Depends(func, scope='function')` for top level (parameterless) dependencies",
+  "description": "**Summary**\r\n\r\nThis PR enables proper support for `scope=\"function\"` on `APIRoute` dependencies by passing the dependency\u2019s scope through to `get_dependant`. Previously, parameter-less dependencies created via `get_parameterless_sub_dependant` ignored `depends.scope`, which led to unexpected behavior for function-scoped dependencies.\r\n\r\n**Motivation**\r\n\r\nUsers expect `scope=\"function\"` to work as defined, even when registered at the route level. Because `depends.scope` wasn\u2019t forwarded, function scope behaved like the default(request). This change aligns behavior with user expectations and documentation around dependency scopes.\r\n(Related: #14296)",
+  "changed_files": [
+    {
+      "path": "fastapi/dependencies/utils.py",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14301/files#diff-1",
+      "patch": "@@ -129,7 +129,10 @@ def get_parameterless_sub_dependant(*, depends: params.Depends, path: str) -> De\n     if isinstance(depends, params.Security) and depends.scopes:\n         use_security_scopes.extend(depends.scopes)\n     return get_dependant(\n-        path=path, call=depends.dependency, security_scopes=use_security_scopes\n+        path=path,\n+        call=depends.dependency,\n+        scope=depends.scope,\n+        security_scopes=use_security_scopes,\n     )\n \n ",
+      "changed_code": "if isinstance(depends, params.Security) and depends.scopes:\n        use_security_scopes.extend(depends.scopes)\n    return get_dependant(\n        path=path, call=depends.dependency, security_scopes=use_security_scopes\n        path=path,\n        call=depends.dependency,\n        scope=depends.scope,\n        security_scopes=use_security_scopes,\n    )",
+      "review_comments": [
+        {
+          "id": 3495674790,
+          "user": "YuriiMotov",
+          "body": "Hi! \ud83d\udc4b\r\n\r\nI think the test logic looks a bit complicated. Can we try to simplify it?\r\n\r\nMy suggestion:\r\n\r\n<details>\r\n\r\n```py\r\nfrom typing import Any\r\n\r\nfrom fastapi import APIRouter, Depends, FastAPI, HTTPException\r\nfrom fastapi.testclient import TestClient\r\n\r\napp = FastAPI()\r\n\r\n\r\ndef raise_after_yield() -> Any:\r\n    yield\r\n    raise HTTPException(status_code=503, detail=\"Exception after yield\")\r\n\r\n\r\nrouter = APIRouter()\r\n\r\n\r\n@router.get(\"/\")\r\ndef get_index():\r\n    return {\"status\": \"ok\"}\r\n\r\n\r\napp.include_router(\r\n    prefix=\"/router-scope-function\",\r\n    router=router,\r\n    dependencies=[Depends(raise_after_yield, scope=\"function\")],\r\n)\r\n\r\napp.include_router(\r\n    prefix=\"/router-scope-request\",\r\n    router=router,\r\n    dependencies=[Depends(raise_after_yield, scope=\"request\")],\r\n)\r\n\r\n\r\nclient = TestClient(app)\r\n\r\n\r\ndef test_router_level_dep_scope_function() -> None:\r\n    response = client.get(\"/router-scope-function/\")\r\n    assert response.status_code == 503\r\n    assert response.json() == {\"detail\": \"Exception after yield\"}\r\n\r\n\r\ndef test_router_level_dep_scope_request() -> None:\r\n    client = TestClient(app, raise_server_exceptions=False)\r\n    response = client.get(\"/router-scope-request/\")\r\n    assert response.status_code == 200\r\n    assert response.json() == {\"status\": \"ok\"}\r\n\r\n\r\ndef test_app_level_dep_scope_function() -> None:\r\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"function\")])\r\n\r\n    @app.get(\"/app-scope-function\")\r\n    def get_app_scope_function():\r\n        return {\"status\": \"ok\"}\r\n\r\n    client = TestClient(app)\r\n\r\n    response = client.get(\"/app-scope-function\")\r\n    assert response.status_code == 503\r\n    assert response.json() == {\"detail\": \"Exception after yield\"}\r\n\r\n\r\ndef test_app_level_dep_scope_request() -> None:\r\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"request\")])\r\n\r\n    @app.get(\"/app-scope-request\")\r\n    def get_app_scope_request():\r\n        return {\"status\": \"ok\"}\r\n\r\n    client = TestClient(app, raise_server_exceptions=False)\r\n\r\n    response = client.get(\"/app-scope-request\")\r\n    assert response.status_code == 200\r\n    assert response.json() == {\"status\": \"ok\"}\r\n```\r\n\r\n</details>\r\n\r\nAlso, I think we should put these tests into existing `test_dependency_yield_scope.py` and `test_dependency_yield_scope_websockets.py`\r\n\r\nWhat do you think?",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3495703036,
+          "user": "YuriiMotov",
+          "body": "How about changing the title to\r\n````\r\n\ud83d\udc1b Fix `Depends(func, scope='function')` for top level (parameterless) dependencies\r\n````\r\n?",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3495918965,
+          "user": "luzzodev",
+          "body": "I totally agree with all suggestions. I was unsure to use dependencies on include_router  but seems reasonable. I\u2019ll update the PR later this evening \ud83d\ude01",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_dependency_yield_scope.py",
+      "status": "modified",
+      "additions": 63,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14301/files#diff-2",
+      "patch": "@@ -2,7 +2,7 @@\n from typing import Any, Tuple\n \n import pytest\n-from fastapi import Depends, FastAPI\n+from fastapi import APIRouter, Depends, FastAPI, HTTPException\n from fastapi.exceptions import FastAPIError\n from fastapi.responses import StreamingResponse\n from fastapi.testclient import TestClient\n@@ -20,6 +20,11 @@ def dep_session() -> Any:\n     s.open = False\n \n \n+def raise_after_yield() -> Any:\n+    yield\n+    raise HTTPException(status_code=503, detail=\"Exception after yield\")\n+\n+\n SessionFuncDep = Annotated[Session, Depends(dep_session, scope=\"function\")]\n SessionRequestDep = Annotated[Session, Depends(dep_session, scope=\"request\")]\n SessionDefaultDep = Annotated[Session, Depends(dep_session)]\n@@ -64,6 +69,12 @@ def get_named_regular_func_session(session: SessionFuncDep) -> Any:\n ]\n \n app = FastAPI()\n+router = APIRouter()\n+\n+\n+@router.get(\"/\")\n+def get_index():\n+    return {\"status\": \"ok\"}\n \n \n @app.get(\"/function-scope\")\n@@ -124,6 +135,18 @@ def iter_data():\n     return StreamingResponse(iter_data())\n \n \n+app.include_router(\n+    prefix=\"/router-scope-function\",\n+    router=router,\n+    dependencies=[Depends(raise_after_yield, scope=\"function\")],\n+)\n+\n+app.include_router(\n+    prefix=\"/router-scope-request\",\n+    router=router,\n+    dependencies=[Depends(raise_after_yield, scope=\"request\")],\n+)\n+\n client = TestClient(app)\n \n \n@@ -182,3 +205,42 @@ def test_regular_function_scope() -> None:\n     data = response.json()\n     assert data[\"named_session_open\"] is True\n     assert data[\"session_open\"] is False\n+\n+\n+def test_router_level_dep_scope_function() -> None:\n+    response = client.get(\"/router-scope-function/\")\n+    assert response.status_code == 503\n+    assert response.json() == {\"detail\": \"Exception after yield\"}\n+\n+\n+def test_router_level_dep_scope_request() -> None:\n+    with TestClient(app, raise_server_exceptions=False) as client:\n+        response = client.get(\"/router-scope-request/\")\n+        assert response.status_code == 200\n+        assert response.json() == {\"status\": \"ok\"}\n+\n+\n+def test_app_level_dep_scope_function() -> None:\n+    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"function\")])\n+\n+    @app.get(\"/app-scope-function\")\n+    def get_app_scope_function():\n+        return {\"status\": \"ok\"}\n+\n+    with TestClient(app) as client:\n+        response = client.get(\"/app-scope-function\")\n+        assert response.status_code == 503\n+        assert response.json() == {\"detail\": \"Exception after yield\"}\n+\n+\n+def test_app_level_dep_scope_request() -> None:\n+    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"request\")])\n+\n+    @app.get(\"/app-scope-request\")\n+    def get_app_scope_request():\n+        return {\"status\": \"ok\"}\n+\n+    with TestClient(app, raise_server_exceptions=False) as client:\n+        response = client.get(\"/app-scope-request\")\n+        assert response.status_code == 200\n+        assert response.json() == {\"status\": \"ok\"}",
+      "changed_code": "from typing import Any, Tuple\n\nimport pytest\nfrom fastapi import Depends, FastAPI\nfrom fastapi import APIRouter, Depends, FastAPI, HTTPException\nfrom fastapi.exceptions import FastAPIError\nfrom fastapi.responses import StreamingResponse\nfrom fastapi.testclient import TestClient\n    s.open = False\n\n\ndef raise_after_yield() -> Any:\n    yield\n    raise HTTPException(status_code=503, detail=\"Exception after yield\")\n\n\nSessionFuncDep = Annotated[Session, Depends(dep_session, scope=\"function\")]\nSessionRequestDep = Annotated[Session, Depends(dep_session, scope=\"request\")]\nSessionDefaultDep = Annotated[Session, Depends(dep_session)]\n]\n\napp = FastAPI()\nrouter = APIRouter()\n\n\n@router.get(\"/\")\ndef get_index():\n    return {\"status\": \"ok\"}\n\n\n@app.get(\"/function-scope\")\n    return StreamingResponse(iter_data())\n\n\napp.include_router(\n    prefix=\"/router-scope-function\",\n    router=router,\n    dependencies=[Depends(raise_after_yield, scope=\"function\")],\n)\n\napp.include_router(\n    prefix=\"/router-scope-request\",\n    router=router,\n    dependencies=[Depends(raise_after_yield, scope=\"request\")],\n)\n\nclient = TestClient(app)\n\n\n    data = response.json()\n    assert data[\"named_session_open\"] is True\n    assert data[\"session_open\"] is False\n\n\ndef test_router_level_dep_scope_function() -> None:\n    response = client.get(\"/router-scope-function/\")\n    assert response.status_code == 503\n    assert response.json() == {\"detail\": \"Exception after yield\"}\n\n\ndef test_router_level_dep_scope_request() -> None:\n    with TestClient(app, raise_server_exceptions=False) as client:\n        response = client.get(\"/router-scope-request/\")\n        assert response.status_code == 200\n        assert response.json() == {\"status\": \"ok\"}\n\n\ndef test_app_level_dep_scope_function() -> None:\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"function\")])\n\n    @app.get(\"/app-scope-function\")\n    def get_app_scope_function():\n        return {\"status\": \"ok\"}\n\n    with TestClient(app) as client:\n        response = client.get(\"/app-scope-function\")\n        assert response.status_code == 503\n        assert response.json() == {\"detail\": \"Exception after yield\"}\n\n\ndef test_app_level_dep_scope_request() -> None:\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"request\")])\n\n    @app.get(\"/app-scope-request\")\n    def get_app_scope_request():\n        return {\"status\": \"ok\"}\n\n    with TestClient(app, raise_server_exceptions=False) as client:\n        response = client.get(\"/app-scope-request\")\n        assert response.status_code == 200\n        assert response.json() == {\"status\": \"ok\"}",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3495674790,
+      "user": "YuriiMotov",
+      "body": "Hi! \ud83d\udc4b\r\n\r\nI think the test logic looks a bit complicated. Can we try to simplify it?\r\n\r\nMy suggestion:\r\n\r\n<details>\r\n\r\n```py\r\nfrom typing import Any\r\n\r\nfrom fastapi import APIRouter, Depends, FastAPI, HTTPException\r\nfrom fastapi.testclient import TestClient\r\n\r\napp = FastAPI()\r\n\r\n\r\ndef raise_after_yield() -> Any:\r\n    yield\r\n    raise HTTPException(status_code=503, detail=\"Exception after yield\")\r\n\r\n\r\nrouter = APIRouter()\r\n\r\n\r\n@router.get(\"/\")\r\ndef get_index():\r\n    return {\"status\": \"ok\"}\r\n\r\n\r\napp.include_router(\r\n    prefix=\"/router-scope-function\",\r\n    router=router,\r\n    dependencies=[Depends(raise_after_yield, scope=\"function\")],\r\n)\r\n\r\napp.include_router(\r\n    prefix=\"/router-scope-request\",\r\n    router=router,\r\n    dependencies=[Depends(raise_after_yield, scope=\"request\")],\r\n)\r\n\r\n\r\nclient = TestClient(app)\r\n\r\n\r\ndef test_router_level_dep_scope_function() -> None:\r\n    response = client.get(\"/router-scope-function/\")\r\n    assert response.status_code == 503\r\n    assert response.json() == {\"detail\": \"Exception after yield\"}\r\n\r\n\r\ndef test_router_level_dep_scope_request() -> None:\r\n    client = TestClient(app, raise_server_exceptions=False)\r\n    response = client.get(\"/router-scope-request/\")\r\n    assert response.status_code == 200\r\n    assert response.json() == {\"status\": \"ok\"}\r\n\r\n\r\ndef test_app_level_dep_scope_function() -> None:\r\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"function\")])\r\n\r\n    @app.get(\"/app-scope-function\")\r\n    def get_app_scope_function():\r\n        return {\"status\": \"ok\"}\r\n\r\n    client = TestClient(app)\r\n\r\n    response = client.get(\"/app-scope-function\")\r\n    assert response.status_code == 503\r\n    assert response.json() == {\"detail\": \"Exception after yield\"}\r\n\r\n\r\ndef test_app_level_dep_scope_request() -> None:\r\n    app = FastAPI(dependencies=[Depends(raise_after_yield, scope=\"request\")])\r\n\r\n    @app.get(\"/app-scope-request\")\r\n    def get_app_scope_request():\r\n        return {\"status\": \"ok\"}\r\n\r\n    client = TestClient(app, raise_server_exceptions=False)\r\n\r\n    response = client.get(\"/app-scope-request\")\r\n    assert response.status_code == 200\r\n    assert response.json() == {\"status\": \"ok\"}\r\n```\r\n\r\n</details>\r\n\r\nAlso, I think we should put these tests into existing `test_dependency_yield_scope.py` and `test_dependency_yield_scope_websockets.py`\r\n\r\nWhat do you think?",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3495703036,
+      "user": "YuriiMotov",
+      "body": "How about changing the title to\r\n````\r\n\ud83d\udc1b Fix `Depends(func, scope='function')` for top level (parameterless) dependencies\r\n````\r\n?",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3495918965,
+      "user": "luzzodev",
+      "body": "I totally agree with all suggestions. I was unsure to use dependencies on include_router  but seems reasonable. I\u2019ll update the PR later this evening \ud83d\ude01",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

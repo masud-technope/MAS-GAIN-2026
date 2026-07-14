@@ -1,0 +1,128 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65902,
+  "title": "BUG: Series.dt.isocalendar() not preserving index for pyarrow dtypes",
+  "description": "- [x] closes #65894\n- [x] [Tests added and passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#writing-tests) if fixing a bug or adding a new feature\n- [x] All [code checks passed](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#pre-commit).\n- [x] Added [type annotations](https://pandas.pydata.org/pandas-docs/dev/development/contributing_codebase.html#type-hints) to new arguments/methods/functions.\n- [x] Added an entry in the latest `doc/source/whatsnew/vX.X.X.rst` file if fixing a bug or adding a new feature.\n- [x] I have reviewed and followed all the [contribution guidelines](https://pandas.pydata.org/docs/dev/development/contributing.html)\n- [x] If I used AI to develop this pull request, I prompted it to follow `AGENTS.md`.\n\n`ArrowTemporalProperties.isocalendar()` built the result `DataFrame` without passing an index, so it defaulted to a `RangeIndex` instead of preserving the original Series index. This caused index misalignment (and broken assignments) for pyarrow-backed date/datetime dtypes. The fix passes the original index, mirroring the existing `_orig` / `_parent.index` pattern used elsewhere in the class.\n",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65902/files#diff-1",
+      "patch": "@@ -258,6 +258,7 @@ Datetimelike\n - Bug in :meth:`DataFrame.replace` and :meth:`Series.replace` raising ``AssertionError`` instead of :class:`OutOfBoundsDatetime` when replacing with a ``datetime`` value outside the ``datetime64[ns]`` range (:issue:`61671`)\n - Bug in :meth:`DataFrame.to_string` and :meth:`Series.to_string` where ``na_rep`` was ignored for datetime and timedelta columns, always displaying ``NaT`` (:issue:`55426`)\n - Bug in :meth:`DatetimeArray.isin` and :meth:`TimedeltaArray.isin` where mismatched resolutions could silently truncate finer-resolution values, leading to false matches (:issue:`64545`)\n+- Bug in :meth:`Series.dt.isocalendar` with a pyarrow-backed datetime or date dtype not preserving the original index, resetting it to a default :class:`RangeIndex` (:issue:`65894`)\n - Bug in adding non-nano :class:`DatetimeIndex` with non-vectorized offsets (e.g. :class:`CustomBusinessDay`, :class:`CustomBusinessMonthEnd`) having a sub-unit ``offset`` parameter incorrectly truncating the result or raising ``AttributeError`` (:issue:`56586`)\n - Bug in subtracting :class:`BusinessHour` (or :class:`CustomBusinessHour`) from a :class:`Timestamp` giving incorrect results when the subtraction would land exactly on the business-hour opening time (:issue:`33682`)\n ",
+      "changed_code": "- Bug in :meth:`DataFrame.replace` and :meth:`Series.replace` raising ``AssertionError`` instead of :class:`OutOfBoundsDatetime` when replacing with a ``datetime`` value outside the ``datetime64[ns]`` range (:issue:`61671`)\n- Bug in :meth:`DataFrame.to_string` and :meth:`Series.to_string` where ``na_rep`` was ignored for datetime and timedelta columns, always displaying ``NaT`` (:issue:`55426`)\n- Bug in :meth:`DatetimeArray.isin` and :meth:`TimedeltaArray.isin` where mismatched resolutions could silently truncate finer-resolution values, leading to false matches (:issue:`64545`)\n- Bug in :meth:`Series.dt.isocalendar` with a pyarrow-backed datetime or date dtype not preserving the original index, resetting it to a default :class:`RangeIndex` (:issue:`65894`)\n- Bug in adding non-nano :class:`DatetimeIndex` with non-vectorized offsets (e.g. :class:`CustomBusinessDay`, :class:`CustomBusinessMonthEnd`) having a sub-unit ``offset`` parameter incorrectly truncating the result or raising ``AttributeError`` (:issue:`56586`)\n- Bug in subtracting :class:`BusinessHour` (or :class:`CustomBusinessHour`) from a :class:`Timestamp` giving incorrect results when the subtraction would land exactly on the business-hour opening time (:issue:`33682`)",
+      "review_comments": [
+        {
+          "id": 4804047136,
+          "user": "rhshadrach",
+          "body": "Thanks @VishalGawade1 ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4804247190,
+          "user": "VishalGawade1",
+          "body": "It was a pleasure contributing, @rhshadrach ! If there are any additional issues I can work on, I'd be glad to help and continue contributing :)",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/indexes/accessors.py",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65902/files#diff-2",
+      "patch": "@@ -240,7 +240,8 @@ def isocalendar(self) -> DataFrame:\n             {\n                 col: type(self._parent.array)(result.field(i))  # type: ignore[call-arg]\n                 for i, col in enumerate([\"year\", \"week\", \"day\"])\n-            }\n+            },\n+            index=self._parent.index,\n         )\n         return iso_calendar_df\n ",
+      "changed_code": "{\n                col: type(self._parent.array)(result.field(i))  # type: ignore[call-arg]\n                for i, col in enumerate([\"year\", \"week\", \"day\"])\n            }\n            },\n            index=self._parent.index,\n        )\n        return iso_calendar_df",
+      "review_comments": [
+        {
+          "id": 3438853259,
+          "user": "rhshadrach",
+          "body": "I don't think we need to branch here; can use `self._parent.index`. It will be the same as `_orig.index` when the latter is not None.",
+          "line": null,
+          "original_line": 242,
+          "position": 1,
+          "target_code": "@@ -236,11 +236,16 @@ def isocalendar(self) -> DataFrame:\n             ._dt_isocalendar()\n             ._pa_array.combine_chunks()\n         )\n+        if self._orig is not None:\n+            index = self._orig.index\n+        else:\n+            index = self._parent.index",
+          "source": "review_comment"
+        },
+        {
+          "id": 3439031172,
+          "user": "VishalGawade1",
+          "body": "Good point, thanks - simplified to use `self._parent.index` directly.",
+          "line": null,
+          "original_line": 242,
+          "position": 1,
+          "target_code": "@@ -236,11 +236,16 @@ def isocalendar(self) -> DataFrame:\n             ._dt_isocalendar()\n             ._pa_array.combine_chunks()\n         )\n+        if self._orig is not None:\n+            index = self._orig.index\n+        else:\n+            index = self._parent.index",
+          "source": "review_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/tests/extension/test_arrow.py",
+      "status": "modified",
+      "additions": 17,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65902/files#diff-3",
+      "patch": "@@ -2751,6 +2751,23 @@ def test_dt_isocalendar():\n     tm.assert_frame_equal(result, expected)\n \n \n+def test_dt_isocalendar_preserves_index():\n+    # GH#65894\n+    ser = pd.Series(\n+        [datetime(year=2023, month=1, day=2, hour=3), None],\n+        dtype=ArrowDtype(pa.timestamp(\"ns\")),\n+        index=[\"a\", \"b\"],\n+    )\n+    result = ser.dt.isocalendar()\n+    expected = pd.DataFrame(\n+        [[2023, 1, 1], [0, 0, 0]],\n+        columns=[\"year\", \"week\", \"day\"],\n+        index=[\"a\", \"b\"],\n+        dtype=\"int64[pyarrow]\",\n+    )\n+    tm.assert_frame_equal(result, expected)\n+\n+\n @pytest.mark.parametrize(\n     \"method, exp\", [[\"day_name\", \"Sunday\"], [\"month_name\", \"January\"]]\n )",
+      "changed_code": "tm.assert_frame_equal(result, expected)\n\n\ndef test_dt_isocalendar_preserves_index():\n    # GH#65894\n    ser = pd.Series(\n        [datetime(year=2023, month=1, day=2, hour=3), None],\n        dtype=ArrowDtype(pa.timestamp(\"ns\")),\n        index=[\"a\", \"b\"],\n    )\n    result = ser.dt.isocalendar()\n    expected = pd.DataFrame(\n        [[2023, 1, 1], [0, 0, 0]],\n        columns=[\"year\", \"week\", \"day\"],\n        index=[\"a\", \"b\"],\n        dtype=\"int64[pyarrow]\",\n    )\n    tm.assert_frame_equal(result, expected)\n\n\n@pytest.mark.parametrize(\n    \"method, exp\", [[\"day_name\", \"Sunday\"], [\"month_name\", \"January\"]]\n)",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3438853259,
+      "user": "rhshadrach",
+      "body": "I don't think we need to branch here; can use `self._parent.index`. It will be the same as `_orig.index` when the latter is not None.",
+      "path": "pandas/core/indexes/accessors.py",
+      "line": null,
+      "original_line": 242,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65902/files#diff-2",
+      "target_code": "@@ -236,11 +236,16 @@ def isocalendar(self) -> DataFrame:\n             ._dt_isocalendar()\n             ._pa_array.combine_chunks()\n         )\n+        if self._orig is not None:\n+            index = self._orig.index\n+        else:\n+            index = self._parent.index"
+    },
+    {
+      "id": 3439031172,
+      "user": "VishalGawade1",
+      "body": "Good point, thanks - simplified to use `self._parent.index` directly.",
+      "path": "pandas/core/indexes/accessors.py",
+      "line": null,
+      "original_line": 242,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65902/files#diff-2",
+      "target_code": "@@ -236,11 +236,16 @@ def isocalendar(self) -> DataFrame:\n             ._dt_isocalendar()\n             ._pa_array.combine_chunks()\n         )\n+        if self._orig is not None:\n+            index = self._orig.index\n+        else:\n+            index = self._parent.index"
+    },
+    {
+      "id": 4804047136,
+      "user": "rhshadrach",
+      "body": "Thanks @VishalGawade1 ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4804247190,
+      "user": "VishalGawade1",
+      "body": "It was a pleasure contributing, @rhshadrach ! If there are any additional issues I can work on, I'd be glad to help and continue contributing :)",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

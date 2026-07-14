@@ -1,0 +1,180 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14343,
+  "title": "\ud83d\udc1b Fix request body mediatype for form model with `File` fields",
+  "description": "Currently if form parameter model contains `File` field, the content mediatype for this path operation in openapi will be wrong:\r\n\r\n```py\r\nfrom fastapi import FastAPI, Form, File\r\nfrom pydantic import BaseModel\r\n\r\napp = FastAPI()\r\n\r\nclass MyModel(BaseModel):\r\n    file_model: bytes = File()\r\n\r\n@app.post(\"/file-model\")\r\nasync def create_item(item: MyModel = Form()):\r\n    return {\"file_size\": len(item.file_model)}\r\n```\r\n\r\nRequest body content mediatype in openapi will be `application/x-www-form-urlencoded` instead of `multipart/form-data`:\r\n```json\r\n        \"requestBody\": {\r\n          \"content\": {\r\n            \"application/x-www-form-urlencoded\": {\r\n              \"schema\": {\r\n                \"$ref\": \"#/components/schemas/MyModel\"\r\n              }\r\n            }\r\n          },\r\n          \"required\": true\r\n        },\r\n```\r\n\r\nThis PR enforces the content mediatype to be `multipart/form-data` for form parameter models that contain at least one `File` field.\r\nI added `if request_media_type == \"application/x-www-form-urlencoded\"` condition to make it possible to override mediatype by passing a parameter to `Form`:\r\n\r\n```\r\n@app.post(\"/file-model\")\r\nasync def create_item(item: MyModel = Form(media_type=\"whatever\")):\r\n    ...\r\n```\r\n",
+  "changed_files": [
+    {
+      "path": "docs/en/docs/tutorial/request-form-models.md",
+      "status": "modified",
+      "additions": 9,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-1",
+      "patch": "@@ -36,6 +36,14 @@ You can verify it in the docs UI at `/docs`:\n <img src=\"/img/tutorial/request-form-models/image01.png\">\n </div>\n \n+## Including `File` Fields { #including-file-fields }\n+\n+You can also include **file fields** inside a form model by using `UploadFile` or `bytes` as field types and annotating them with `File`.\n+\n+If there is at least one `File` field in the form model, **FastAPI** will automatically set the request content media type to `multipart/form-data` for this path operation.\n+\n+{* ../../docs_src/request_form_models/tutorial001b_an_py39.py hl[3,12,16] *}\n+\n ## Forbid Extra Form Fields { #forbid-extra-form-fields }\n \n In some special use cases (probably not very common), you might want to **restrict** the form fields to only those declared in the Pydantic model. And **forbid** any **extra** fields.\n@@ -75,4 +83,4 @@ They will receive an error response telling them that the field `extra` is not a\n \n ## Summary { #summary }\n \n-You can use Pydantic models to declare form fields in FastAPI. \ud83d\ude0e\n+You can use Pydantic models to declare form fields - including file uploads - in FastAPI. \ud83d\ude0e",
+      "changed_code": "<img src=\"/img/tutorial/request-form-models/image01.png\">\n</div>\n\n## Including `File` Fields { #including-file-fields }\n\nYou can also include **file fields** inside a form model by using `UploadFile` or `bytes` as field types and annotating them with `File`.\n\nIf there is at least one `File` field in the form model, **FastAPI** will automatically set the request content media type to `multipart/form-data` for this path operation.\n\n{* ../../docs_src/request_form_models/tutorial001b_an_py39.py hl[3,12,16] *}\n\n## Forbid Extra Form Fields { #forbid-extra-form-fields }\n\nIn some special use cases (probably not very common), you might want to **restrict** the form fields to only those declared in the Pydantic model. And **forbid** any **extra** fields.\n\n## Summary { #summary }\n\nYou can use Pydantic models to declare form fields in FastAPI. \ud83d\ude0e\nYou can use Pydantic models to declare form fields - including file uploads - in FastAPI. \ud83d\ude0e",
+      "review_comments": [
+        {
+          "id": 2527731194,
+          "user": "svlandeg",
+          "body": "Should we add here a note to indicate from which version onwards, this is the case? Something like \r\n```suggestion\r\nIf there is at least one `File` field in the form model, **FastAPI** (from v.0.121.3 onwards) will automatically set the request content media type to `multipart/form-data` for this path operation.\r\n```",
+          "line": 43,
+          "original_line": 43,
+          "position": 8,
+          "target_code": "@@ -36,6 +36,14 @@ You can verify it in the docs UI at `/docs`:\n <img src=\"/img/tutorial/request-form-models/image01.png\">\n </div>\n \n+## Including `File` Fields { #including-file-fields }\n+\n+You can also include **file fields** inside a form model by using `UploadFile` or `bytes` as field types and annotating them with `File`.\n+\n+If there is at least one `File` field in the form model, **FastAPI** will automatically set the request content media type to `multipart/form-data` for this path operation.",
+          "source": "review_comment"
+        },
+        {
+          "id": 3526933113,
+          "user": "github-actions[bot]",
+          "body": "## \ud83d\udcdd Docs preview\n\nLast commit f8a652c3df6919af27e9137a06ab44733fa3c92a at: https://fd593ee8.fastapitiangolo.pages.dev\n\n### Modified Pages\n\n* https://fd593ee8.fastapitiangolo.pages.dev/tutorial/request-form-models/ - ([before](https://fastapi.tiangolo.com/tutorial/request-form-models/))\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3600534954,
+          "user": "tiangolo",
+          "body": "I'm unsure about this. :thinking: \r\n\r\nI wouldn't expect people to create Pydantic models where the fields are declared with something other than Pydantic's regular `Field()`. I wouldn't expect them to use `File()` in a Pydantic model field.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3600549662,
+          "user": "YuriiMotov",
+          "body": "> I'm unsure about this. \ud83e\udd14\r\n> \r\n> I wouldn't expect people to create Pydantic models where the fields are declared with something other than Pydantic's regular `Field()`. I wouldn't expect them to use `File()` in a Pydantic model field.\r\n\r\n\r\nIn the code example I already use `File` for model field:\r\n\r\n```py\r\nclass MyModel(BaseModel):\r\n    file_model: bytes = File()\r\n```",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3642844355,
+          "user": "YuriiMotov",
+          "body": "Closing this as explained [here](https://github.com/fastapi/fastapi/pull/14343#issuecomment-3600534954) and [here](https://github.com/fastapi/fastapi/pull/14358#discussion_r2607250726)",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "docs_src/request_form_models/tutorial001b.py",
+      "status": "added",
+      "additions": 19,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-2",
+      "patch": "@@ -0,0 +1,19 @@\n+from fastapi import FastAPI, File, Form\n+from pydantic import BaseModel\n+\n+app = FastAPI()\n+\n+\n+class FormData(BaseModel):\n+    username: str\n+    password: str\n+    avatar: bytes = File()\n+\n+\n+@app.post(\"/users/\")\n+async def create_user(data: FormData = Form()):\n+    return {\n+        \"username\": data.username,\n+        \"password\": data.password,\n+        \"avatar_file_size\": len(data.avatar),\n+    }",
+      "changed_code": "from fastapi import FastAPI, File, Form\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass FormData(BaseModel):\n    username: str\n    password: str\n    avatar: bytes = File()\n\n\n@app.post(\"/users/\")\nasync def create_user(data: FormData = Form()):\n    return {\n        \"username\": data.username,\n        \"password\": data.password,\n        \"avatar_file_size\": len(data.avatar),\n    }",
+      "review_comments": []
+    },
+    {
+      "path": "docs_src/request_form_models/tutorial001b_an.py",
+      "status": "added",
+      "additions": 20,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-3",
+      "patch": "@@ -0,0 +1,20 @@\n+from fastapi import FastAPI, File, Form\n+from pydantic import BaseModel\n+from typing_extensions import Annotated\n+\n+app = FastAPI()\n+\n+\n+class FormData(BaseModel):\n+    username: str\n+    password: str\n+    avatar: bytes = File()\n+\n+\n+@app.post(\"/users/\")\n+async def create_user(data: Annotated[FormData, Form()]):\n+    return {\n+        \"username\": data.username,\n+        \"password\": data.password,\n+        \"avatar_file_size\": len(data.avatar),\n+    }",
+      "changed_code": "from fastapi import FastAPI, File, Form\nfrom pydantic import BaseModel\nfrom typing_extensions import Annotated\n\napp = FastAPI()\n\n\nclass FormData(BaseModel):\n    username: str\n    password: str\n    avatar: bytes = File()\n\n\n@app.post(\"/users/\")\nasync def create_user(data: Annotated[FormData, Form()]):\n    return {\n        \"username\": data.username,\n        \"password\": data.password,\n        \"avatar_file_size\": len(data.avatar),\n    }",
+      "review_comments": []
+    },
+    {
+      "path": "docs_src/request_form_models/tutorial001b_an_py39.py",
+      "status": "added",
+      "additions": 21,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-4",
+      "patch": "@@ -0,0 +1,21 @@\n+from typing import Annotated\n+\n+from fastapi import FastAPI, File, Form\n+from pydantic import BaseModel\n+\n+app = FastAPI()\n+\n+\n+class FormData(BaseModel):\n+    username: str\n+    password: str\n+    avatar: bytes = File()\n+\n+\n+@app.post(\"/users/\")\n+async def create_user(data: Annotated[FormData, Form()]):\n+    return {\n+        \"username\": data.username,\n+        \"password\": data.password,\n+        \"avatar_file_size\": len(data.avatar),\n+    }",
+      "changed_code": "from typing import Annotated\n\nfrom fastapi import FastAPI, File, Form\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass FormData(BaseModel):\n    username: str\n    password: str\n    avatar: bytes = File()\n\n\n@app.post(\"/users/\")\nasync def create_user(data: Annotated[FormData, Form()]):\n    return {\n        \"username\": data.username,\n        \"password\": data.password,\n        \"avatar_file_size\": len(data.avatar),\n    }",
+      "review_comments": []
+    },
+    {
+      "path": "fastapi/openapi/utils.py",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-5",
+      "patch": "@@ -8,6 +8,7 @@\n     JsonSchemaValue,\n     ModelField,\n     Undefined,\n+    get_cached_model_fields,\n     get_compat_model_name_map,\n     get_definitions,\n     get_schema_from_model_field,\n@@ -23,7 +24,7 @@\n from fastapi.encoders import jsonable_encoder\n from fastapi.openapi.constants import METHODS_WITH_BODY, REF_PREFIX\n from fastapi.openapi.models import OpenAPI\n-from fastapi.params import Body, ParamTypes\n+from fastapi.params import Body, File, Form, ParamTypes\n from fastapi.responses import Response\n from fastapi.types import ModelNameMap\n from fastapi.utils import (\n@@ -185,6 +186,16 @@ def get_openapi_operation_request_body(\n     )\n     field_info = cast(Body, body_field.field_info)\n     request_media_type = field_info.media_type\n+    if (\n+        isinstance(field_info, Form)\n+        and request_media_type == \"application/x-www-form-urlencoded\"\n+        and lenient_issubclass(body_field.type_, BaseModel)\n+    ):  # Enforce multipart/form-data media type for Form models with File fields\n+        form_model_fields = get_cached_model_fields(body_field.type_)\n+        if any(\n+            isinstance(form_field.field_info, File) for form_field in form_model_fields\n+        ):\n+            request_media_type = \"multipart/form-data\"\n     required = body_field.required\n     request_body_oai: Dict[str, Any] = {}\n     if required:",
+      "changed_code": "JsonSchemaValue,\n    ModelField,\n    Undefined,\n    get_cached_model_fields,\n    get_compat_model_name_map,\n    get_definitions,\n    get_schema_from_model_field,\nfrom fastapi.encoders import jsonable_encoder\nfrom fastapi.openapi.constants import METHODS_WITH_BODY, REF_PREFIX\nfrom fastapi.openapi.models import OpenAPI\nfrom fastapi.params import Body, ParamTypes\nfrom fastapi.params import Body, File, Form, ParamTypes\nfrom fastapi.responses import Response\nfrom fastapi.types import ModelNameMap\nfrom fastapi.utils import (\n    )\n    field_info = cast(Body, body_field.field_info)\n    request_media_type = field_info.media_type\n    if (\n        isinstance(field_info, Form)\n        and request_media_type == \"application/x-www-form-urlencoded\"\n        and lenient_issubclass(body_field.type_, BaseModel)\n    ):  # Enforce multipart/form-data media type for Form models with File fields\n        form_model_fields = get_cached_model_fields(body_field.type_)\n        if any(\n            isinstance(form_field.field_info, File) for form_field in form_model_fields\n        ):\n            request_media_type = \"multipart/form-data\"\n    required = body_field.required\n    request_body_oai: Dict[str, Any] = {}\n    if required:",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_tutorial/test_request_form_models/test_tutorial001b.py",
+      "status": "added",
+      "additions": 188,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-6",
+      "patch": "@@ -0,0 +1,188 @@\n+import importlib\n+\n+import pytest\n+from dirty_equals import IsDict\n+from fastapi.testclient import TestClient\n+\n+from ...utils import needs_py39\n+\n+\n+@pytest.fixture(\n+    name=\"client\",\n+    params=[\n+        \"tutorial001b\",\n+        \"tutorial001b_an\",\n+        pytest.param(\"tutorial001b_an_py39\", marks=needs_py39),\n+    ],\n+)\n+def get_client(request: pytest.FixtureRequest):\n+    mod = importlib.import_module(f\"docs_src.request_form_models.{request.param}\")\n+\n+    client = TestClient(mod.app)\n+    return client\n+\n+\n+def test_post_body_form(client: TestClient):\n+    response = client.post(\n+        \"/users/\",\n+        data={\"username\": \"Foo\", \"password\": \"secret\"},\n+        files={\"avatar\": (\"avatar.png\", b\"filebytes\")},\n+    )\n+    assert response.status_code == 200\n+    assert response.json() == {\n+        \"username\": \"Foo\",\n+        \"password\": \"secret\",\n+        \"avatar_file_size\": 9,\n+    }\n+\n+\n+def test_post_body_form_no_avatar(client: TestClient):\n+    response = client.post(\"/users/\", data={\"username\": \"Foo\", \"password\": \"secret\"})\n+    assert response.status_code == 422\n+    assert response.json() == IsDict(\n+        {\n+            \"detail\": [\n+                {\n+                    \"type\": \"missing\",\n+                    \"loc\": [\"body\", \"avatar\"],\n+                    \"msg\": \"Field required\",\n+                    \"input\": {\"username\": \"Foo\", \"password\": \"secret\"},\n+                }\n+            ]\n+        }\n+    ) | IsDict(\n+        # TODO: remove when deprecating Pydantic v1\n+        {\n+            \"detail\": [\n+                {\n+                    \"loc\": [\"body\", \"avatar\"],\n+                    \"msg\": \"field required\",\n+                    \"type\": \"value_error.missing\",\n+                }\n+            ]\n+        }\n+    )\n+\n+\n+def test_openapi_schema(client: TestClient):\n+    response = client.get(\"/openapi.json\")\n+    assert response.status_code == 200, response.text\n+    assert response.json() == {\n+        \"openapi\": \"3.1.0\",\n+        \"info\": {\n+            \"title\": \"FastAPI\",\n+            \"version\": \"0.1.0\",\n+        },\n+        \"paths\": {\n+            \"/users/\": {\n+                \"post\": {\n+                    \"operationId\": \"create_user_users__post\",\n+                    \"requestBody\": {\n+                        \"content\": {\n+                            \"multipart/form-data\": {\n+                                \"schema\": {\n+                                    \"$ref\": \"#/components/schemas/FormData\",\n+                                },\n+                            },\n+                        },\n+                        \"required\": True,\n+                    },\n+                    \"responses\": {\n+                        \"200\": {\n+                            \"content\": {\n+                                \"application/json\": {\n+                                    \"schema\": {},\n+                                },\n+                            },\n+                            \"description\": \"Successful Response\",\n+                        },\n+                        \"422\": {\n+                            \"content\": {\n+                                \"application/json\": {\n+                                    \"schema\": {\n+                                        \"$ref\": \"#/components/schemas/HTTPValidationError\",\n+                                    },\n+                                },\n+                            },\n+                            \"description\": \"Validation Error\",\n+                        },\n+                    },\n+                    \"summary\": \"Create User\",\n+                },\n+            },\n+        },\n+        \"components\": {\n+            \"schemas\": {\n+                \"FormData\": {\n+                    \"properties\": {\n+                        \"avatar\": {\n+                            \"format\": \"binary\",\n+                            \"title\": \"Avatar\",\n+                            \"type\": \"string\",\n+                        },\n+                        \"password\": {\n+                            \"title\": \"Password\",\n+                            \"type\": \"string\",\n+                        },\n+                        \"username\": {\n+                            \"title\": \"Username\",\n+                            \"type\": \"string\",\n+                        },\n+                    },\n+                    \"required\": [\n+                        \"username\",\n+                        \"password\",\n+                        \"avatar\",\n+                    ],\n+                    \"title\": \"FormData\",\n+                    \"type\": \"object\",\n+                },\n+                \"HTTPValidationError\": {\n+                    \"properties\": {\n+                        \"detail\": {\n+                            \"items\": {\n+                                \"$ref\": \"#/components/schemas/ValidationError\",\n+                            },\n+                            \"title\": \"Detail\",\n+                            \"type\": \"array\",\n+                        },\n+                    },\n+                    \"title\": \"HTTPValidationError\",\n+                    \"type\": \"object\",\n+                },\n+                \"ValidationError\": {\n+                    \"properties\": {\n+                        \"loc\": {\n+                            \"items\": {\n+                                \"anyOf\": [\n+                                    {\n+                                        \"type\": \"string\",\n+                                    },\n+                                    {\n+                                        \"type\": \"integer\",\n+                                    },\n+                                ],\n+                            },\n+                            \"title\": \"Location\",\n+                            \"type\": \"array\",\n+                        },\n+                        \"msg\": {\n+                            \"title\": \"Message\",\n+                            \"type\": \"string\",\n+                        },\n+                        \"type\": {\n+                            \"title\": \"Error Type\",\n+                            \"type\": \"string\",\n+                        },\n+                    },\n+                    \"required\": [\n+                        \"loc\",\n+                        \"msg\",\n+                        \"type\",\n+                    ],\n+                    \"title\": \"ValidationError\",\n+                    \"type\": \"object\",\n+                },\n+            },\n+        },\n+    }",
+      "changed_code": "import importlib\n\nimport pytest\nfrom dirty_equals import IsDict\nfrom fastapi.testclient import TestClient\n\nfrom ...utils import needs_py39\n\n\n@pytest.fixture(\n    name=\"client\",\n    params=[\n        \"tutorial001b\",\n        \"tutorial001b_an\",\n        pytest.param(\"tutorial001b_an_py39\", marks=needs_py39),\n    ],\n)\ndef get_client(request: pytest.FixtureRequest):\n    mod = importlib.import_module(f\"docs_src.request_form_models.{request.param}\")\n\n    client = TestClient(mod.app)\n    return client\n\n\ndef test_post_body_form(client: TestClient):\n    response = client.post(\n        \"/users/\",\n        data={\"username\": \"Foo\", \"password\": \"secret\"},\n        files={\"avatar\": (\"avatar.png\", b\"filebytes\")},\n    )\n    assert response.status_code == 200\n    assert response.json() == {\n        \"username\": \"Foo\",\n        \"password\": \"secret\",\n        \"avatar_file_size\": 9,\n    }\n\n\ndef test_post_body_form_no_avatar(client: TestClient):\n    response = client.post(\"/users/\", data={\"username\": \"Foo\", \"password\": \"secret\"})\n    assert response.status_code == 422\n    assert response.json() == IsDict(\n        {\n            \"detail\": [\n                {\n                    \"type\": \"missing\",\n                    \"loc\": [\"body\", \"avatar\"],\n                    \"msg\": \"Field required\",\n                    \"input\": {\"username\": \"Foo\", \"password\": \"secret\"},\n                }\n            ]\n        }\n    ) | IsDict(\n        # TODO: remove when deprecating Pydantic v1\n        {\n            \"detail\": [\n                {\n                    \"loc\": [\"body\", \"avatar\"],\n                    \"msg\": \"field required\",\n                    \"type\": \"value_error.missing\",\n                }\n            ]\n        }\n    )\n\n\ndef test_openapi_schema(client: TestClient):\n    response = client.get(\"/openapi.json\")\n    assert response.status_code == 200, response.text\n    assert response.json() == {\n        \"openapi\": \"3.1.0\",\n        \"info\": {\n            \"title\": \"FastAPI\",\n            \"version\": \"0.1.0\",\n        },\n        \"paths\": {\n            \"/users/\": {\n                \"post\": {\n                    \"operationId\": \"create_user_users__post\",\n                    \"requestBody\": {\n                        \"content\": {\n                            \"multipart/form-data\": {\n                                \"schema\": {\n                                    \"$ref\": \"#/components/schemas/FormData\",\n                                },\n                            },\n                        },\n                        \"required\": True,\n                    },\n                    \"responses\": {\n                        \"200\": {\n                            \"content\": {\n                                \"application/json\": {\n                                    \"schema\": {},\n                                },\n                            },\n                            \"description\": \"Successful Response\",\n                        },\n                        \"422\": {\n                            \"content\": {\n                                \"application/json\": {\n                                    \"schema\": {\n                                        \"$ref\": \"#/components/schemas/HTTPValidationError\",\n                                    },\n                                },\n                            },\n                            \"description\": \"Validation Error\",\n                        },\n                    },\n                    \"summary\": \"Create User\",\n                },\n            },\n        },\n        \"components\": {\n            \"schemas\": {\n                \"FormData\": {\n                    \"properties\": {\n                        \"avatar\": {\n                            \"format\": \"binary\",\n                            \"title\": \"Avatar\",\n                            \"type\": \"string\",\n                        },\n                        \"password\": {\n                            \"title\": \"Password\",\n                            \"type\": \"string\",\n                        },\n                        \"username\": {\n                            \"title\": \"Username\",\n                            \"type\": \"string\",\n                        },\n                    },\n                    \"required\": [\n                        \"username\",\n                        \"password\",\n                        \"avatar\",\n                    ],\n                    \"title\": \"FormData\",\n                    \"type\": \"object\",\n                },\n                \"HTTPValidationError\": {\n                    \"properties\": {\n                        \"detail\": {\n                            \"items\": {\n                                \"$ref\": \"#/components/schemas/ValidationError\",\n                            },\n                            \"title\": \"Detail\",\n                            \"type\": \"array\",\n                        },\n                    },\n                    \"title\": \"HTTPValidationError\",\n                    \"type\": \"object\",\n                },\n                \"ValidationError\": {\n                    \"properties\": {\n                        \"loc\": {\n                            \"items\": {\n                                \"anyOf\": [\n                                    {\n                                        \"type\": \"string\",\n                                    },\n                                    {\n                                        \"type\": \"integer\",\n                                    },\n                                ],\n                            },\n                            \"title\": \"Location\",\n                            \"type\": \"array\",\n                        },\n                        \"msg\": {\n                            \"title\": \"Message\",\n                            \"type\": \"string\",\n                        },\n                        \"type\": {\n                            \"title\": \"Error Type\",\n                            \"type\": \"string\",\n                        },\n                    },\n                    \"required\": [\n                        \"loc\",\n                        \"msg\",\n                        \"type\",\n                    ],\n                    \"title\": \"ValidationError\",\n                    \"type\": \"object\",\n                },\n            },\n        },\n    }",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 2527731194,
+      "user": "svlandeg",
+      "body": "Should we add here a note to indicate from which version onwards, this is the case? Something like \r\n```suggestion\r\nIf there is at least one `File` field in the form model, **FastAPI** (from v.0.121.3 onwards) will automatically set the request content media type to `multipart/form-data` for this path operation.\r\n```",
+      "path": "docs/en/docs/tutorial/request-form-models.md",
+      "line": 43,
+      "original_line": 43,
+      "position": 8,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14343/files#diff-1",
+      "target_code": "@@ -36,6 +36,14 @@ You can verify it in the docs UI at `/docs`:\n <img src=\"/img/tutorial/request-form-models/image01.png\">\n </div>\n \n+## Including `File` Fields { #including-file-fields }\n+\n+You can also include **file fields** inside a form model by using `UploadFile` or `bytes` as field types and annotating them with `File`.\n+\n+If there is at least one `File` field in the form model, **FastAPI** will automatically set the request content media type to `multipart/form-data` for this path operation."
+    },
+    {
+      "id": 3526933113,
+      "user": "github-actions[bot]",
+      "body": "## \ud83d\udcdd Docs preview\n\nLast commit f8a652c3df6919af27e9137a06ab44733fa3c92a at: https://fd593ee8.fastapitiangolo.pages.dev\n\n### Modified Pages\n\n* https://fd593ee8.fastapitiangolo.pages.dev/tutorial/request-form-models/ - ([before](https://fastapi.tiangolo.com/tutorial/request-form-models/))\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3600534954,
+      "user": "tiangolo",
+      "body": "I'm unsure about this. :thinking: \r\n\r\nI wouldn't expect people to create Pydantic models where the fields are declared with something other than Pydantic's regular `Field()`. I wouldn't expect them to use `File()` in a Pydantic model field.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3600549662,
+      "user": "YuriiMotov",
+      "body": "> I'm unsure about this. \ud83e\udd14\r\n> \r\n> I wouldn't expect people to create Pydantic models where the fields are declared with something other than Pydantic's regular `Field()`. I wouldn't expect them to use `File()` in a Pydantic model field.\r\n\r\n\r\nIn the code example I already use `File` for model field:\r\n\r\n```py\r\nclass MyModel(BaseModel):\r\n    file_model: bytes = File()\r\n```",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3642844355,
+      "user": "YuriiMotov",
+      "body": "Closing this as explained [here](https://github.com/fastapi/fastapi/pull/14343#issuecomment-3600534954) and [here](https://github.com/fastapi/fastapi/pull/14358#discussion_r2607250726)",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

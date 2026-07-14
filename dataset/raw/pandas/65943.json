@@ -1,0 +1,173 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65943,
+  "title": "BUG: refs not set in DataFrame constructor from Series/Index with dtype=\"str\" (infer_string=False)",
+  "description": "closes #63936\nxref GH-64024 (temporary xfail, reverted here)\n\nWith ``infer_string=False``, ``dtype=\"str\"`` resolves to the numpy ``'<U'`` dtype, so ``DataFrame(obj, dtype=\"str\")`` goes through the object/numpy path in ``ndarray_to_mgr`` (not the ``StringDtype`` EA path the issue title suggests). That path realizes the cast via ``sanitize_array`` \u2192 ``_try_cast`` \u2192 ``lib.ensure_string_array(copy=False)``, which returns a **view** of the source when it already holds strings.\n\n``refs`` was gated on ``astype_is_view(values.dtype, dtype)``, and ``astype_is_view(object, '<U')`` is ``False`` (correct for ``.astype``, which copies). So refs were dropped even though memory was shared, leaving ``_has_no_reference(0)`` ``True``. This is a real copy-on-write violation \u2014 mutating the resulting DataFrame corrupted the source ``Series``/``Index``:\n\n```python\nwith pd.option_context(\"infer_string\", False):\n    obj = Series([\"a\", \"b\"], dtype=\"str\")\n    df = DataFrame(obj, dtype=\"str\")\n    df.iloc[0, 0] = \"ZZZ\"\n    # before: obj == [\"ZZZ\", \"b\"]  (corrupted)\n    # after:  obj == [\"a\", \"b\"]    (unchanged)\n```\n\n## Fix\n\nIn ``ndarray_to_mgr``, hold onto the source's references and attach them when the realized block **actually** shares memory with the source (checked via ``np.shares_memory`` after ``sanitize_array``). This is precise: a non-string object source (e.g. ``[1, 2]``) genuinely copies in ``ensure_string_array``, so refs correctly stay unset there.\n\nThe ``StringDtype`` EA path (``infer_string=True``) was already correct, so no change is needed in ``_form_blocks``.\n\nAlso re-enables the ``\"str\"`` case in ``test_dataframe_from_series_or_index`` that GH-64024 temporarily xfailed.",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65943/files#diff-1",
+      "patch": "@@ -297,6 +297,7 @@ Conversion\n - Bug in :class:`DataFrame` constructor where constructing from a list of uniform-dtype arrays (e.g. pyarrow, :class:`CategoricalDtype`, nullable dtypes) lost the dtype (:issue:`49593`)\n - Bug in :func:`pd.array` silently converting NaN to a nonsensical integer when given float data containing NaN and a NumPy integer dtype (:issue:`41724`)\n - Fixed :func:`pandas.array` to preserve mask information when converting NumPy masked arrays, converting masked values to missing values (:issue:`63879`)\n+- Fixed bug in :class:`DataFrame` constructor where mutating the result could corrupt the source :class:`Series` or :class:`Index` when built with ``dtype=\"str\"`` and ``infer_string=False`` (:issue:`63936`)\n - Fixed bug in :meth:`DataFrame.from_records` where ``exclude`` was ignored when ``data`` was an iterator and ``nrows=0`` (:issue:`63774`)\n \n Strings",
+      "changed_code": "- Bug in :class:`DataFrame` constructor where constructing from a list of uniform-dtype arrays (e.g. pyarrow, :class:`CategoricalDtype`, nullable dtypes) lost the dtype (:issue:`49593`)\n- Bug in :func:`pd.array` silently converting NaN to a nonsensical integer when given float data containing NaN and a NumPy integer dtype (:issue:`41724`)\n- Fixed :func:`pandas.array` to preserve mask information when converting NumPy masked arrays, converting masked values to missing values (:issue:`63879`)\n- Fixed bug in :class:`DataFrame` constructor where mutating the result could corrupt the source :class:`Series` or :class:`Index` when built with ``dtype=\"str\"`` and ``infer_string=False`` (:issue:`63936`)\n- Fixed bug in :meth:`DataFrame.from_records` where ``exclude`` was ignored when ``data`` was an iterator and ``nrows=0`` (:issue:`63774`)\n\nStrings",
+      "review_comments": [
+        {
+          "id": 4801987638,
+          "user": "jorisvandenbossche",
+          "body": "FWIW, with the current amount of added code, I am not sure this is worth the added complexity for fixing this just for `infer_string=False`",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4802203702,
+          "user": "jbrockmendel",
+          "body": "> FWIW, with the current amount of added code, I am not sure this is worth the added complexity for fixing this just for infer_string=False\r\n\r\nI'd be fine with ignoring that. I think we should go further and get rid of `infer_string=False`",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4802234878,
+          "user": "jorisvandenbossche",
+          "body": "> I think we should go further and get rid of `infer_string=False`\r\n\r\nThat is the plan, we just haven't discussed the exact timeline yet. Related issue: https://github.com/pandas-dev/pandas/issues/63803",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4819700136,
+          "user": "jbrockmendel",
+          "body": "I think comments have been addressed.  If there are no more, I plan to merge at the end of next week.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4820419308,
+          "user": "jorisvandenbossche",
+          "body": "Thanks!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/dtypes/astype.py",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65943/files#diff-2",
+      "patch": "@@ -274,6 +274,10 @@ def astype_is_view(dtype: DtypeObj, new_dtype: DtypeObj) -> bool:\n         return True\n \n     elif isinstance(dtype, np.dtype) and isinstance(new_dtype, np.dtype):\n+        # GH#63936: pandas realizes a numpy str (\"<U\") target as an object\n+        #  array via ensure_string_array, which views an object source.\n+        if is_object_dtype(dtype) and is_string_dtype(new_dtype):\n+            return True\n         # Only equal numpy dtypes avoid a copy\n         return False\n ",
+      "changed_code": "return True\n\n    elif isinstance(dtype, np.dtype) and isinstance(new_dtype, np.dtype):\n        # GH#63936: pandas realizes a numpy str (\"<U\") target as an object\n        #  array via ensure_string_array, which views an object source.\n        if is_object_dtype(dtype) and is_string_dtype(new_dtype):\n            return True\n        # Only equal numpy dtypes avoid a copy\n        return False",
+      "review_comments": []
+    },
+    {
+      "path": "pandas/tests/copy_view/test_constructors.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 11,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65943/files#diff-3",
+      "patch": "@@ -1,8 +1,6 @@\n import numpy as np\n import pytest\n \n-from pandas._config import using_string_dtype\n-\n import pandas as pd\n from pandas import (\n     DataFrame,\n@@ -250,15 +248,7 @@ def test_dataframe_from_dict_of_series_with_reindex(dtype):\n         ([1, 2], \"int64\"),\n         # 1D-only EA\n         ([1, 2], \"Int64\"),\n-        pytest.param(\n-            [\"a\", \"b\"],\n-            \"str\",\n-            marks=pytest.mark.xfail(\n-                reason=\"TODO bug with infer_string=False and specifying dtype='str'\"\n-            )\n-            if not using_string_dtype()\n-            else [],\n-        ),\n+        ([\"a\", \"b\"], \"str\"),\n         ([\"a\", \"b\"], object),\n         # 2D EA\n         (",
+      "changed_code": "import numpy as np\nimport pytest\n\nfrom pandas._config import using_string_dtype\n\nimport pandas as pd\nfrom pandas import (\n    DataFrame,\n        ([1, 2], \"int64\"),\n        # 1D-only EA\n        ([1, 2], \"Int64\"),\n        pytest.param(\n            [\"a\", \"b\"],\n            \"str\",\n            marks=pytest.mark.xfail(\n                reason=\"TODO bug with infer_string=False and specifying dtype='str'\"\n            )\n            if not using_string_dtype()\n            else [],\n        ),\n        ([\"a\", \"b\"], \"str\"),\n        ([\"a\", \"b\"], object),\n        # 2D EA\n        (",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3476044856,
+      "user": "jorisvandenbossche",
+      "body": "Is it possible to fix astype_is_view instead?",
+      "path": "pandas/core/internals/construction.py",
+      "line": null,
+      "original_line": 252,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -245,9 +245,14 @@ def ndarray_to_mgr(\n \n         return arrays_to_mgr(values, columns, index, dtype=dtype, consolidate=copy)\n \n-    if isinstance(values, (ABCSeries, Index)):\n-        if not copy and (dtype is None or astype_is_view(values.dtype, dtype)):\n-            refs = values._references\n+    source_refs = None\n+    if not copy and isinstance(values, (ABCSeries, Index)):\n+        # Hold onto the source references; whether the constructed block ends\n+        #  up sharing memory is verified after sanitize_array below, since e.g.\n+        #  casting object -> \"str\" keeps a view that astype_is_view misses."
+    },
+    {
+      "id": 3476547426,
+      "user": "jbrockmendel",
+      "body": "updated",
+      "path": "pandas/core/internals/construction.py",
+      "line": null,
+      "original_line": 252,
+      "position": 1,
+      "file_url": null,
+      "target_code": "@@ -245,9 +245,14 @@ def ndarray_to_mgr(\n \n         return arrays_to_mgr(values, columns, index, dtype=dtype, consolidate=copy)\n \n-    if isinstance(values, (ABCSeries, Index)):\n-        if not copy and (dtype is None or astype_is_view(values.dtype, dtype)):\n-            refs = values._references\n+    source_refs = None\n+    if not copy and isinstance(values, (ABCSeries, Index)):\n+        # Hold onto the source references; whether the constructed block ends\n+        #  up sharing memory is verified after sanitize_array below, since e.g.\n+        #  casting object -> \"str\" keeps a view that astype_is_view misses."
+    },
+    {
+      "id": 4801987638,
+      "user": "jorisvandenbossche",
+      "body": "FWIW, with the current amount of added code, I am not sure this is worth the added complexity for fixing this just for `infer_string=False`",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4802203702,
+      "user": "jbrockmendel",
+      "body": "> FWIW, with the current amount of added code, I am not sure this is worth the added complexity for fixing this just for infer_string=False\r\n\r\nI'd be fine with ignoring that. I think we should go further and get rid of `infer_string=False`",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4802234878,
+      "user": "jorisvandenbossche",
+      "body": "> I think we should go further and get rid of `infer_string=False`\r\n\r\nThat is the plan, we just haven't discussed the exact timeline yet. Related issue: https://github.com/pandas-dev/pandas/issues/63803",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4819700136,
+      "user": "jbrockmendel",
+      "body": "I think comments have been addressed.  If there are no more, I plan to merge at the end of next week.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4820419308,
+      "user": "jorisvandenbossche",
+      "body": "Thanks!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

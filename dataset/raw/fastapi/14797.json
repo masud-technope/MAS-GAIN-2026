@@ -1,0 +1,240 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14797,
+  "title": "\ud83d\udc1b Fix non-deterministic openapi spec in case of duplicated model names",
+  "description": "v0.128.0 introduced non-deterministic openapi spec schema naming in the case of multiple pydantic models with the same name.\r\n\r\nCommit [e300630](https://github.com/fastapi/fastapi/commit/e3006305518a56ea35f62a31748ad26fe4356fcc#diff-1086603fdd56511aafd1d279396b142b803e48164327148e6de26cef4cdaed81L504) removed the check for conflicting names.\r\n\r\nThe component names two classes named `User` would randomly be either\r\n\r\n```\r\nUser\r\ntests__test_duplicate_model_names_openapi__b__model__User\r\n```\r\n\r\n```\r\ntests__test_duplicate_model_names_openapi__a__model__User\r\nUser\r\n```\r\n\r\nWith this change, we reintroduce the conflict check to always use fully qualified names in case of conflict.",
+  "changed_files": [
+    {
+      "path": "fastapi/_compat/v2.py",
+      "status": "modified",
+      "additions": 16,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-1",
+      "patch": "@@ -1,3 +1,4 @@\n+import hashlib\n import re\n import warnings\n from collections.abc import Sequence\n@@ -491,11 +492,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__qualname__}_{hashlib.sha1(model.__module__.encode()).hexdigest()}\"\n+\n+\n def get_model_name_map(unique_models: TypeModelSet) -> dict[TypeModelOrEnum, str]:\n     name_model_map = {}\n+    conflicting_names: set[str] = set()\n     for model in unique_models:\n         model_name = normalize_name(model.__name__)\n-        name_model_map[model_name] = model\n+        if model_name in conflicting_names:\n+            model_name = get_long_model_name(model)\n+            name_model_map[model_name] = model\n+        elif model_name in name_model_map:\n+            conflicting_names.add(model_name)\n+            conflicting_model = name_model_map.pop(model_name)\n+            name_model_map[get_long_model_name(conflicting_model)] = conflicting_model\n+            name_model_map[get_long_model_name(model)] = model\n+        else:\n+            name_model_map[model_name] = model\n     return {v: k for k, v in name_model_map.items()}\n \n ",
+      "changed_code": "import hashlib\nimport re\nimport warnings\nfrom collections.abc import Sequence\n    return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n\n\ndef get_long_model_name(model: TypeModelOrEnum) -> str:\n    return f\"{model.__qualname__}_{hashlib.sha1(model.__module__.encode()).hexdigest()}\"\n\n\ndef get_model_name_map(unique_models: TypeModelSet) -> dict[TypeModelOrEnum, str]:\n    name_model_map = {}\n    conflicting_names: set[str] = set()\n    for model in unique_models:\n        model_name = normalize_name(model.__name__)\n        name_model_map[model_name] = model\n        if model_name in conflicting_names:\n            model_name = get_long_model_name(model)\n            name_model_map[model_name] = model\n        elif model_name in name_model_map:\n            conflicting_names.add(model_name)\n            conflicting_model = name_model_map.pop(model_name)\n            name_model_map[get_long_model_name(conflicting_model)] = conflicting_model\n            name_model_map[get_long_model_name(model)] = model\n        else:\n            name_model_map[model_name] = model\n    return {v: k for k, v in name_model_map.items()}",
+      "review_comments": [
+        {
+          "id": 2754655276,
+          "user": "YuriiMotov",
+          "body": "I think we shouldn't expose the module path. Some developers may not want this to happen..\n",
+          "line": null,
+          "original_line": 495,
+          "position": 1,
+          "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")",
+          "source": "review_comment"
+        },
+        {
+          "id": 2754773983,
+          "user": "igoyak",
+          "body": "Makes sense, I think hashing the path is the way to go. It's easy and the possible exposure is extremely small. \r\nI'll push an update. ",
+          "line": null,
+          "original_line": 495,
+          "position": 1,
+          "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")",
+          "source": "review_comment"
+        },
+        {
+          "id": 2754906772,
+          "user": "igoyak",
+          "body": "Should be reasonable now, let me know what you think. ",
+          "line": null,
+          "original_line": 495,
+          "position": 1,
+          "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")",
+          "source": "review_comment"
+        },
+        {
+          "id": 3830547514,
+          "user": "codspeed-hq[bot]",
+          "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## Merging this PR will **not alter performance**\n\n\n\n\n`\u2705 20` untouched benchmarks  \n\n\n\n---\n\n<sub>Comparing <code>igoyak:fix-nondeterministic-openapi</code> (a77a07b) with <code>master</code> (bc9ad6b)[^unexpected-base]</sub>\n\n<a href=\"https://codspeed.io/fastapi/fastapi/branches/igoyak%3Afix-nondeterministic-openapi?utm_source=github&utm_medium=comment-v2&utm_content=button\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-dark.svg\">\n    <source media=\"(prefers-color-scheme: light)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\">\n    <img alt=\"Open in CodSpeed\" src=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\" width=\"169\" height=\"32\">\n  </picture>\n</a>\n\n[^unexpected-base]: No successful run was found on <code>master</code> (82959de) during the generation of this report, so bc9ad6b was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3843942149,
+          "user": "YuriiMotov",
+          "body": "@igoyak, thanks!\r\n\r\nLet's wait for Sebastian to review it and validate the idea.\r\n\r\nI still think that we should emit a warning and provide a way for developers to override the function that is used for component names generation",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4131959630,
+          "user": "igoyak",
+          "body": "Looks like this bugfix was essentially done (accidentally?) in https://github.com/fastapi/fastapi/commit/cf55bad so closing this. ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/__init__.py",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-2",
+      "patch": "",
+      "changed_code": "",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/a/__init__.py",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-3",
+      "patch": "",
+      "changed_code": "",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/a/model.py",
+      "status": "added",
+      "additions": 5,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-4",
+      "patch": "@@ -0,0 +1,5 @@\n+from pydantic import BaseModel\n+\n+\n+class User(BaseModel):\n+    a: int",
+      "changed_code": "from pydantic import BaseModel\n\n\nclass User(BaseModel):\n    a: int",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/app.py",
+      "status": "added",
+      "additions": 19,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-5",
+      "patch": "@@ -0,0 +1,19 @@\n+from fastapi import FastAPI\n+\n+from tests.test_duplicate_model_names_openapi.a.model import User as UserA\n+from tests.test_duplicate_model_names_openapi.b.model import User as UserB\n+from tests.test_duplicate_model_names_openapi.c.model import User as UserC\n+\n+app = FastAPI()\n+\n+\n+@app.get(\"/a\", response_model=UserA)\n+def user_a(): ...\n+\n+\n+@app.get(\"/b\", response_model=UserB)\n+def user_b(): ...\n+\n+\n+@app.get(\"/c\", response_model=UserC)\n+def user_c(): ...",
+      "changed_code": "from fastapi import FastAPI\n\nfrom tests.test_duplicate_model_names_openapi.a.model import User as UserA\nfrom tests.test_duplicate_model_names_openapi.b.model import User as UserB\nfrom tests.test_duplicate_model_names_openapi.c.model import User as UserC\n\napp = FastAPI()\n\n\n@app.get(\"/a\", response_model=UserA)\ndef user_a(): ...\n\n\n@app.get(\"/b\", response_model=UserB)\ndef user_b(): ...\n\n\n@app.get(\"/c\", response_model=UserC)\ndef user_c(): ...",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/b/__init__.py",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-6",
+      "patch": "",
+      "changed_code": "",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/b/model.py",
+      "status": "added",
+      "additions": 5,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-7",
+      "patch": "@@ -0,0 +1,5 @@\n+from pydantic import BaseModel\n+\n+\n+class User(BaseModel):\n+    b: int",
+      "changed_code": "from pydantic import BaseModel\n\n\nclass User(BaseModel):\n    b: int",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/c/__init__.py",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-8",
+      "patch": "",
+      "changed_code": "",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/c/model.py",
+      "status": "added",
+      "additions": 5,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-9",
+      "patch": "@@ -0,0 +1,5 @@\n+from pydantic import BaseModel\n+\n+\n+class User(BaseModel):\n+    c: int",
+      "changed_code": "from pydantic import BaseModel\n\n\nclass User(BaseModel):\n    c: int",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_duplicate_model_names_openapi/test_duplicate_model_names_openapi.py",
+      "status": "added",
+      "additions": 103,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-10",
+      "patch": "@@ -0,0 +1,103 @@\n+from fastapi.testclient import TestClient\n+\n+from .app import app\n+\n+client = TestClient(app)\n+\n+\n+def test_openapi_schema():\n+    response = client.get(\"/openapi.json\")\n+    assert response.status_code == 200, response.text\n+\n+    schema = response.json()\n+    component_names = schema[\"components\"][\"schemas\"].keys()\n+\n+    # Hashed fully qualified names due to conflict\n+    assert set(component_names) == {\n+        \"User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\",\n+        \"User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\",\n+        \"User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\",\n+    }\n+\n+    assert schema == {\n+        \"openapi\": \"3.1.0\",\n+        \"info\": {\"title\": \"FastAPI\", \"version\": \"0.1.0\"},\n+        \"paths\": {\n+            \"/a\": {\n+                \"get\": {\n+                    \"summary\": \"User A\",\n+                    \"operationId\": \"user_a_a_get\",\n+                    \"responses\": {\n+                        \"200\": {\n+                            \"description\": \"Successful Response\",\n+                            \"content\": {\n+                                \"application/json\": {\n+                                    \"schema\": {\n+                                        \"$ref\": \"#/components/schemas/User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\"\n+                                    }\n+                                }\n+                            },\n+                        }\n+                    },\n+                }\n+            },\n+            \"/b\": {\n+                \"get\": {\n+                    \"summary\": \"User B\",\n+                    \"operationId\": \"user_b_b_get\",\n+                    \"responses\": {\n+                        \"200\": {\n+                            \"description\": \"Successful Response\",\n+                            \"content\": {\n+                                \"application/json\": {\n+                                    \"schema\": {\n+                                        \"$ref\": \"#/components/schemas/User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\"\n+                                    }\n+                                }\n+                            },\n+                        }\n+                    },\n+                }\n+            },\n+            \"/c\": {\n+                \"get\": {\n+                    \"summary\": \"User C\",\n+                    \"operationId\": \"user_c_c_get\",\n+                    \"responses\": {\n+                        \"200\": {\n+                            \"description\": \"Successful Response\",\n+                            \"content\": {\n+                                \"application/json\": {\n+                                    \"schema\": {\n+                                        \"$ref\": \"#/components/schemas/User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\"\n+                                    }\n+                                }\n+                            },\n+                        }\n+                    },\n+                }\n+            },\n+        },\n+        \"components\": {\n+            \"schemas\": {\n+                \"User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\": {\n+                    \"properties\": {\"b\": {\"type\": \"integer\", \"title\": \"B\"}},\n+                    \"type\": \"object\",\n+                    \"required\": [\"b\"],\n+                    \"title\": \"User\",\n+                },\n+                \"User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\": {\n+                    \"properties\": {\"a\": {\"type\": \"integer\", \"title\": \"A\"}},\n+                    \"type\": \"object\",\n+                    \"required\": [\"a\"],\n+                    \"title\": \"User\",\n+                },\n+                \"User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\": {\n+                    \"properties\": {\"c\": {\"type\": \"integer\", \"title\": \"C\"}},\n+                    \"type\": \"object\",\n+                    \"required\": [\"c\"],\n+                    \"title\": \"User\",\n+                },\n+            }\n+        },\n+    }",
+      "changed_code": "from fastapi.testclient import TestClient\n\nfrom .app import app\n\nclient = TestClient(app)\n\n\ndef test_openapi_schema():\n    response = client.get(\"/openapi.json\")\n    assert response.status_code == 200, response.text\n\n    schema = response.json()\n    component_names = schema[\"components\"][\"schemas\"].keys()\n\n    # Hashed fully qualified names due to conflict\n    assert set(component_names) == {\n        \"User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\",\n        \"User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\",\n        \"User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\",\n    }\n\n    assert schema == {\n        \"openapi\": \"3.1.0\",\n        \"info\": {\"title\": \"FastAPI\", \"version\": \"0.1.0\"},\n        \"paths\": {\n            \"/a\": {\n                \"get\": {\n                    \"summary\": \"User A\",\n                    \"operationId\": \"user_a_a_get\",\n                    \"responses\": {\n                        \"200\": {\n                            \"description\": \"Successful Response\",\n                            \"content\": {\n                                \"application/json\": {\n                                    \"schema\": {\n                                        \"$ref\": \"#/components/schemas/User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\"\n                                    }\n                                }\n                            },\n                        }\n                    },\n                }\n            },\n            \"/b\": {\n                \"get\": {\n                    \"summary\": \"User B\",\n                    \"operationId\": \"user_b_b_get\",\n                    \"responses\": {\n                        \"200\": {\n                            \"description\": \"Successful Response\",\n                            \"content\": {\n                                \"application/json\": {\n                                    \"schema\": {\n                                        \"$ref\": \"#/components/schemas/User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\"\n                                    }\n                                }\n                            },\n                        }\n                    },\n                }\n            },\n            \"/c\": {\n                \"get\": {\n                    \"summary\": \"User C\",\n                    \"operationId\": \"user_c_c_get\",\n                    \"responses\": {\n                        \"200\": {\n                            \"description\": \"Successful Response\",\n                            \"content\": {\n                                \"application/json\": {\n                                    \"schema\": {\n                                        \"$ref\": \"#/components/schemas/User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\"\n                                    }\n                                }\n                            },\n                        }\n                    },\n                }\n            },\n        },\n        \"components\": {\n            \"schemas\": {\n                \"User_3c4b81c0ed34bf97eb9b4ac8ced9dc17e0dccbb7\": {\n                    \"properties\": {\"b\": {\"type\": \"integer\", \"title\": \"B\"}},\n                    \"type\": \"object\",\n                    \"required\": [\"b\"],\n                    \"title\": \"User\",\n                },\n                \"User_42908c96f764fbf5360c1ae9d3a2a96d90d97bef\": {\n                    \"properties\": {\"a\": {\"type\": \"integer\", \"title\": \"A\"}},\n                    \"type\": \"object\",\n                    \"required\": [\"a\"],\n                    \"title\": \"User\",\n                },\n                \"User_46cbb9d5ba5400ba253a3caa105ccc482d1388ff\": {\n                    \"properties\": {\"c\": {\"type\": \"integer\", \"title\": \"C\"}},\n                    \"type\": \"object\",\n                    \"required\": [\"c\"],\n                    \"title\": \"User\",\n                },\n            }\n        },\n    }",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 2754655276,
+      "user": "YuriiMotov",
+      "body": "I think we shouldn't expose the module path. Some developers may not want this to happen..\n",
+      "path": "fastapi/_compat/v2.py",
+      "line": null,
+      "original_line": 495,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-1",
+      "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")"
+    },
+    {
+      "id": 2754773983,
+      "user": "igoyak",
+      "body": "Makes sense, I think hashing the path is the way to go. It's easy and the possible exposure is extremely small. \r\nI'll push an update. ",
+      "path": "fastapi/_compat/v2.py",
+      "line": null,
+      "original_line": 495,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-1",
+      "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")"
+    },
+    {
+      "id": 2754906772,
+      "user": "igoyak",
+      "body": "Should be reasonable now, let me know what you think. ",
+      "path": "fastapi/_compat/v2.py",
+      "line": null,
+      "original_line": 495,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14797/files#diff-1",
+      "target_code": "@@ -491,11 +491,25 @@ def normalize_name(name: str) -> str:\n     return re.sub(r\"[^a-zA-Z0-9.\\-_]\", \"_\", name)\n \n \n+def get_long_model_name(model: TypeModelOrEnum) -> str:\n+    return f\"{model.__module__}__{model.__qualname__}\".replace(\".\", \"__\")"
+    },
+    {
+      "id": 3830547514,
+      "user": "codspeed-hq[bot]",
+      "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## Merging this PR will **not alter performance**\n\n\n\n\n`\u2705 20` untouched benchmarks  \n\n\n\n---\n\n<sub>Comparing <code>igoyak:fix-nondeterministic-openapi</code> (a77a07b) with <code>master</code> (bc9ad6b)[^unexpected-base]</sub>\n\n<a href=\"https://codspeed.io/fastapi/fastapi/branches/igoyak%3Afix-nondeterministic-openapi?utm_source=github&utm_medium=comment-v2&utm_content=button\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-dark.svg\">\n    <source media=\"(prefers-color-scheme: light)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\">\n    <img alt=\"Open in CodSpeed\" src=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\" width=\"169\" height=\"32\">\n  </picture>\n</a>\n\n[^unexpected-base]: No successful run was found on <code>master</code> (82959de) during the generation of this report, so bc9ad6b was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3843942149,
+      "user": "YuriiMotov",
+      "body": "@igoyak, thanks!\r\n\r\nLet's wait for Sebastian to review it and validate the idea.\r\n\r\nI still think that we should emit a warning and provide a way for developers to override the function that is used for component names generation",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4131959630,
+      "user": "igoyak",
+      "body": "Looks like this bugfix was essentially done (accidentally?) in https://github.com/fastapi/fastapi/commit/cf55bad so closing this. ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

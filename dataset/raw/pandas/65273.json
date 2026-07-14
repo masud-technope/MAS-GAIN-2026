@@ -1,0 +1,117 @@
+{
+  "repo": "pandas-dev/pandas",
+  "pull_request_id": 65273,
+  "title": "BUG: fix segfault in Rolling method='table' sum/mean/median/min/max",
+  "description": "## Summary\n- Closes the long-standing segfault in ``Rolling.{sum,mean,median,min,max}`` with ``method='table'``, ``engine='numba'``, and ``engine_kwargs={'parallel': True}`` on platforms where numba falls back to the non-threadsafe ``workqueue`` threading layer (notably macOS without ``tbb`` / ``intel-openmp``, including all arm64 Macs since those packages have no arm64 wheels on PyPI).\n- The inner ``nan_agg_with_axis`` was pre-jitted with ``parallel=True``, nesting inside the outer ``parallel=True`` ``roll_table`` kernel. On ``workqueue`` the nested launch trips \"Concurrent access has been detected\" and aborts.\n- Fix: drop ``parallel=True`` from the inner function. The inner prange iterates over DataFrame columns; the outer iterates over windows (typically thousands+), which already saturates cores \u2014 nested prange on threadsafe layers was close to a no-op.\n- Reproducer (portable, no macOS required): ``NUMBA_THREADING_LAYER=workqueue pytest pandas/tests/window/test_numba.py::TestTableMethod::test_table_method_rolling_methods``.\n\ncloses #40454\n\n## Test plan\n- [x] ``pytest pandas/tests/window/test_numba.py`` passes locally (752/752, incl. the 90 parametrizations of ``test_table_method_rolling_methods`` that previously segfaulted).\n- [ ] CI green.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
+  "changed_files": [
+    {
+      "path": "doc/source/whatsnew/v3.1.0.rst",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65273/files#diff-1",
+      "patch": "@@ -317,6 +317,7 @@ Groupby/resample/rolling\n - Bug in :meth:`.GroupBy.any` and :meth:`.GroupBy.all` returning ``NaN`` with ``float64`` dtype for unobserved categorical groups on NumPy ``bool`` data instead of the boolean identity value with ``bool`` dtype (:issue:`65100`)\n - Bug in :meth:`.Rolling.skew` and :meth:`.Rolling.kurt` (and their :class:`GroupBy` counterparts) returning ``0.0`` and ``-3.0`` respectively for degenerate windows or groups; these now return ``NaN`` (:issue:`62864`)\n - Bug in :meth:`.Rolling.skew` and :meth:`.Rolling.kurt` returning ``NaN`` for low-variance windows (:issue:`62946`)\n+- Bug in :meth:`.Rolling.sum`, :meth:`.Rolling.mean`, :meth:`.Rolling.median`, :meth:`.Rolling.min`, and :meth:`.Rolling.max` with ``method=\"table\"``, ``engine=\"numba\"``, and ``engine_kwargs={\"parallel\": True}`` could cause a segfault (:issue:`40454`)\n - Bug in :meth:`.SeriesGroupBy.ohlc` ignoring ``as_index=False`` (:issue:`65140`)\n - Bug in :meth:`DataFrame.groupby` with a :class:`Grouper` with ``freq`` raising ``AttributeError`` when all grouping keys are ``NaT`` (:issue:`43486`)\n - Bug in :meth:`Series.resample` and :meth:`DataFrame.resample` where same-frequency resampling with monthly, quarterly, or annual frequencies bypassed aggregation, returning the original values instead of the aggregation result (:issue:`18553`)",
+      "changed_code": "- Bug in :meth:`.GroupBy.any` and :meth:`.GroupBy.all` returning ``NaN`` with ``float64`` dtype for unobserved categorical groups on NumPy ``bool`` data instead of the boolean identity value with ``bool`` dtype (:issue:`65100`)\n- Bug in :meth:`.Rolling.skew` and :meth:`.Rolling.kurt` (and their :class:`GroupBy` counterparts) returning ``0.0`` and ``-3.0`` respectively for degenerate windows or groups; these now return ``NaN`` (:issue:`62864`)\n- Bug in :meth:`.Rolling.skew` and :meth:`.Rolling.kurt` returning ``NaN`` for low-variance windows (:issue:`62946`)\n- Bug in :meth:`.Rolling.sum`, :meth:`.Rolling.mean`, :meth:`.Rolling.median`, :meth:`.Rolling.min`, and :meth:`.Rolling.max` with ``method=\"table\"``, ``engine=\"numba\"``, and ``engine_kwargs={\"parallel\": True}`` could cause a segfault (:issue:`40454`)\n- Bug in :meth:`.SeriesGroupBy.ohlc` ignoring ``as_index=False`` (:issue:`65140`)\n- Bug in :meth:`DataFrame.groupby` with a :class:`Grouper` with ``freq`` raising ``AttributeError`` when all grouping keys are ``NaT`` (:issue:`43486`)\n- Bug in :meth:`Series.resample` and :meth:`DataFrame.resample` where same-frequency resampling with monthly, quarterly, or annual frequencies bypassed aggregation, returning the original values instead of the aggregation result (:issue:`18553`)",
+      "review_comments": [
+        {
+          "id": 4274567780,
+          "user": "mroeschke",
+          "body": "Thanks @jbrockmendel ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "pandas/core/window/numba_.py",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65273/files#diff-2",
+      "patch": "@@ -242,7 +242,11 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # Not jitted directly: this is passed through jit_user_function in\n+    # generate_numba_table_func, which wraps it with register_jitable so it\n+    # inlines into roll_table's outer jit. A standalone @jit(parallel=True)\n+    # here nests parallel regions and crashes the workqueue threading layer\n+    # on platforms without tbb/openmp (GH#40454).\n     def nan_agg_with_axis(table):\n         result = np.empty(table.shape[1])\n         for i in numba.prange(table.shape[1]):",
+      "changed_code": "else:\n        numba = import_optional_dependency(\"numba\")\n\n    @numba.jit(nogil=True, parallel=True)\n    # Not jitted directly: this is passed through jit_user_function in\n    # generate_numba_table_func, which wraps it with register_jitable so it\n    # inlines into roll_table's outer jit. A standalone @jit(parallel=True)\n    # here nests parallel regions and crashes the workqueue threading layer\n    # on platforms without tbb/openmp (GH#40454).\n    def nan_agg_with_axis(table):\n        result = np.empty(table.shape[1])\n        for i in numba.prange(table.shape[1]):",
+      "review_comments": [
+        {
+          "id": 3105510506,
+          "user": "mroeschke",
+          "body": "Instead, is it just possible to inline this function when `roll_table` is created in `generate_numba_table_func` so maybe 1 jitted function with 2 `numba.prange` calls won't segfault?",
+          "line": null,
+          "original_line": 248,
+          "position": 1,
+          "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3105523384,
+          "user": "jbrockmendel",
+          "body": "Will give it a try",
+          "line": null,
+          "original_line": 248,
+          "position": 1,
+          "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)",
+          "source": "review_comment"
+        },
+        {
+          "id": 3105688445,
+          "user": "jbrockmendel",
+          "body": "That did the trick",
+          "line": null,
+          "original_line": 248,
+          "position": 1,
+          "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)",
+          "source": "review_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3105510506,
+      "user": "mroeschke",
+      "body": "Instead, is it just possible to inline this function when `roll_table` is created in `generate_numba_table_func` so maybe 1 jitted function with 2 `numba.prange` calls won't segfault?",
+      "path": "pandas/core/window/numba_.py",
+      "line": null,
+      "original_line": 248,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65273/files#diff-2",
+      "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)"
+    },
+    {
+      "id": 3105523384,
+      "user": "jbrockmendel",
+      "body": "Will give it a try",
+      "path": "pandas/core/window/numba_.py",
+      "line": null,
+      "original_line": 248,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65273/files#diff-2",
+      "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)"
+    },
+    {
+      "id": 3105688445,
+      "user": "jbrockmendel",
+      "body": "That did the trick",
+      "path": "pandas/core/window/numba_.py",
+      "line": null,
+      "original_line": 248,
+      "position": 1,
+      "file_url": "https://github.com/pandas-dev/pandas/pull/65273/files#diff-2",
+      "target_code": "@@ -242,7 +242,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):\n     else:\n         numba = import_optional_dependency(\"numba\")\n \n-    @numba.jit(nogil=True, parallel=True)\n+    # parallel=False is load-bearing: this is invoked inside an outer\n+    # parallel=True jit, and nested parallel launches crash numba's\n+    # non-threadsafe workqueue threading layer (GH#40454)\n+    @numba.jit(nogil=True, parallel=False)"
+    },
+    {
+      "id": 4274567780,
+      "user": "mroeschke",
+      "body": "Thanks @jbrockmendel ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

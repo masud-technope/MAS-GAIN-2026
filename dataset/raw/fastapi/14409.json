@@ -1,0 +1,131 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14409,
+  "title": "\ud83d\udc1b Fix non-deterministic openapi schema in case of schema name duplication",
+  "description": "See https://github.com/fastapi/fastapi/discussions/14376\r\n\r\nDuring field remapping stage of openapi schema generation the order of iteration is not consistent across runs. This leads to non-deterministic schema generation\r\n\r\nPreserve the order of this iteration across runs by sorting by the \"new_name\", i.e. the value inserted in this mapping\r\n\r\n",
+  "changed_files": [
+    {
+      "path": "fastapi/_compat/v2.py",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14409/files#diff-1",
+      "patch": "@@ -302,7 +302,10 @@ def _remap_definitions_and_field_mappings(\n     Dict[str, Any],\n ]:\n     old_name_to_new_name_map = {}\n-    for field_key, schema in field_mapping.items():\n+    for field_key, schema in sorted(\n+        field_mapping.items(),\n+        key=lambda x: model_name_map.get(x[0][0].type_, \"\"),\n+    ):\n         model = field_key[0].type_\n         if model not in model_name_map:\n             continue",
+      "changed_code": "Dict[str, Any],\n]:\n    old_name_to_new_name_map = {}\n    for field_key, schema in field_mapping.items():\n    for field_key, schema in sorted(\n        field_mapping.items(),\n        key=lambda x: model_name_map.get(x[0][0].type_, \"\"),\n    ):\n        model = field_key[0].type_\n        if model not in model_name_map:\n            continue",
+      "review_comments": [
+        {
+          "id": 3580151368,
+          "user": "YuriiMotov",
+          "body": "I converted it to Draft. Please mark as Ready for review when it's ready",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3580225203,
+          "user": "mattalexanderhill",
+          "body": "Thanks @YuriiMotov should be ready for review.\r\n\r\nI don't think I have perms to update the labels, I'll let you decide on most appropriate here",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3843954390,
+          "user": "YuriiMotov",
+          "body": "Alternative solution: https://github.com/fastapi/fastapi/pull/14797",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3862118491,
+          "user": "github-actions[bot]",
+          "body": "This pull request has a merge conflict that needs to be resolved.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 4132106499,
+          "user": "YuriiMotov",
+          "body": "This seems to be resolved in latest versions of FastAPI - schema is deterministic again.\r\n\r\nThanks!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3580151368,
+      "user": "YuriiMotov",
+      "body": "I converted it to Draft. Please mark as Ready for review when it's ready",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3580225203,
+      "user": "mattalexanderhill",
+      "body": "Thanks @YuriiMotov should be ready for review.\r\n\r\nI don't think I have perms to update the labels, I'll let you decide on most appropriate here",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3843954390,
+      "user": "YuriiMotov",
+      "body": "Alternative solution: https://github.com/fastapi/fastapi/pull/14797",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3862118491,
+      "user": "github-actions[bot]",
+      "body": "This pull request has a merge conflict that needs to be resolved.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 4132106499,
+      "user": "YuriiMotov",
+      "body": "This seems to be resolved in latest versions of FastAPI - schema is deterministic again.\r\n\r\nThanks!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

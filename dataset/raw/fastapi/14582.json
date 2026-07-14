@@ -1,0 +1,461 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14582,
+  "title": "Also dump v2 models in `_prepare_response_content`",
+  "description": "Corrects #14575 to also dump Pydantic v2 models in `_prepare_response_content`, fixing the regression.",
+  "changed_files": [
+    {
+      "path": "fastapi/routing.py",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14582/files#diff-1",
+      "patch": "@@ -58,6 +58,7 @@\n     get_value_or_default,\n     is_body_allowed_for_status_code,\n )\n+from pydantic import BaseModel\n from starlette import routing\n from starlette._exception_handler import wrap_app_handling_exceptions\n from starlette._utils import is_async_callable\n@@ -152,7 +153,7 @@ def _prepare_response_content(\n     exclude_defaults: bool = False,\n     exclude_none: bool = False,\n ) -> Any:\n-    if isinstance(res, may_v1.BaseModel):\n+    if isinstance(res, (may_v1.BaseModel, BaseModel)):\n         read_with_orm_mode = getattr(_get_model_config(res), \"read_with_orm_mode\", None)  # type: ignore[arg-type]\n         if read_with_orm_mode:\n             # Let from_orm extract the data from this model instead of converting",
+      "changed_code": "get_value_or_default,\n    is_body_allowed_for_status_code,\n)\nfrom pydantic import BaseModel\nfrom starlette import routing\nfrom starlette._exception_handler import wrap_app_handling_exceptions\nfrom starlette._utils import is_async_callable\n    exclude_defaults: bool = False,\n    exclude_none: bool = False,\n) -> Any:\n    if isinstance(res, may_v1.BaseModel):\n    if isinstance(res, (may_v1.BaseModel, BaseModel)):\n        read_with_orm_mode = getattr(_get_model_config(res), \"read_with_orm_mode\", None)  # type: ignore[arg-type]\n        if read_with_orm_mode:\n            # Let from_orm extract the data from this model instead of converting",
+      "review_comments": [
+        {
+          "id": 3678875644,
+          "user": "codspeed-hq[bot]",
+          "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/johnslavik%3Afix-regr-prepare-response-content?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging #14582 will **not alter performance**\n\n<sub>Comparing <code>johnslavik:fix-regr-prepare-response-content</code> (83d55e4) with <code>master</code> (1d93d53)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (6513d4d) during the generation of this report, so 1d93d53 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 40` untouched  \n\n\n\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3678880455,
+          "user": "johnslavik",
+          "body": "Hmm, I think we need to check for both classes. This proposes not dumping v1, which doesn't seem inline with the recent upgrade.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3678883875,
+          "user": "johnslavik",
+          "body": "For safe typing, it would be better to use unions of `v1.BaseModel` and `BaseModel` (v2) in all proper functions.\r\nThe type checker could then detect unsafe ops on two jointly. I'll shoot for `# type: ignore` from the old version for now.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3678899142,
+          "user": "johnslavik",
+          "body": "Looks like the coverage job deadlocked. Closing and reopening to re-run CI.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3678900863,
+          "user": "johnslavik",
+          "body": "LMK if we want some tests here.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3681771254,
+          "user": "potiuk",
+          "body": "Hello @tiangolo - question - do you have some initial assessment of the issue (even if not yet deciding to merge the PR) - 0.127.0 has also started to fail in Airflow and while it seems the root cause is some interaction between FastAPI and Cadwyn - we should soon take some direction with Airflow - we might also add an issue to Cadwyn if you think it should be solved there - just our reproducers clearly show that currently this case is broken",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3681923803,
+          "user": "YuriiMotov",
+          "body": "I think if it only fails with Cadwyn, you should first open issue there.\r\nOr, try to come up with the MRE without third-party dependencies",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3682098644,
+          "user": "potiuk",
+          "body": "The MRE in #14575 shows that it only happens with Cadwyn and @johnslavik even proposed a PR fixing it - explaining why it happens (because of Cadwyn copying classes). I will definitely open issue with Cadwyn, but the investigation and fix suggests that it might happen with other tools as well, so my question is more on whether it is intended change or more of something that can (continue as it was before 0.126.0) be handled by Fastapi.\n\nNote, that it's - as usual In those cases - hard to pinpoint who is 'guilty' - I..e. Whether the fact that it worked before was accidental, and whether the change was intentional, so likely if I open an issue in Cadwyn, they will also expect some assessment from FastApI point of view.\n\nSo I guess just looking at it and assessing by the maintainers might shorten the ping-pong ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3682792249,
+          "user": "tiangolo",
+          "body": "Thanks all for the feedback!\r\n\r\n## Rationale and current state\r\n\r\nSo, in Pydantic v2, with the default behavior in FastAPI (without Cadwyn), this code path would never be reached (if I'm understanding my own code correctly :sweat_smile: ), because a Pydantic v2 model would always have a `ModelField` with a `serialize()` method.\r\n\r\nBefore that PR it was passing everything through this serialization to account for installations of Pydantic v1.\r\n\r\nBut that also means that data is (slowly) double serialized in Python using this code. In Pydantic v2, the serialize method is used, and that uses the `TypeAdapter.dump_python` method, which serializes the data using the internal Pydantic core schema on the Rust side. So, things are much faster.\r\n\r\nThe state before this change was sub-optimal, for the sake of backwards compatibility, but now that I'm removing support for Pydantic v1, it doesn't make sense to do double serialization.\r\n\r\nYesterday I made another release raising a warning when users use Pydantic v1. This week I plan on fully dropping support for Pydantic v1 and raise an error if people use it.\r\n\r\nThat will mean a major internal cleanup, removing a lot of workarounds to support both v1 and v2 at the same time. This will improve performance, correctness, remove a whole range of existing/potential bugs happening from all that custom logic, and will enable a bunch of new features.\r\n\r\nOne of the important new features, which is partially now available, is precisely serializing on the Pydantic side when possible.\r\n\r\nThere are these refactors and some other internal improvements I need to make, some of the future ones will include router refactors that will allow other tools to add their own logic without needing to resort to touching FastAPI internals. But first I have to finish these things.\r\n\r\n## This specific issue\r\n\r\nNow, given all the above, soon I will remove most of this code, once I drop support for Pydantic v1, probably this week or the next.\r\n\r\nI could still make a quick patch version now with this PR, for this specific use case, ideally with a test that fails with master but passes with this PR, to ensure it solves the problem. But it would be something temporary, just to have a release that works and you can use for now.\r\n\r\nBut I imagine some other things will change as well this week or the next once I fully drop support for Pydantic v1. :thinking: ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3682835065,
+          "user": "johnslavik",
+          "body": "> ideally with a test that fails with master but passes with this PR, to ensure it solves the problem\r\n\r\nNoted. Thank you very much for the quick response. I'll add the test shortly and ping you back.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683101805,
+          "user": "potiuk",
+          "body": "Also I think if that's the case, then indeed this is something to be fixed on Cadwyn side. I do not think @tiangolo  - you  should even relese a new version for us - we we can stay with 0.125.0 until Cadwyn solves it.",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683109245,
+          "user": "potiuk",
+          "body": "The issue is already open https://github.com/zmievsa/cadwyn/issues/314\r\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683183637,
+          "user": "tiangolo",
+          "body": "Thanks @potiuk! It might then even make sense for Cadwyn to wait a few days (this or next week) until I fully remove Pydantic v1, as that will be a larger change, but will probably simplify things. :thinking: \r\n\r\nAlso makes me think that maybe I should \"hurry\" to fully remove it instead of waiting more, as that will accelerate/simplify any fixes needed in other projects, instead of having a fix for this version and then having to change more in a few days... :sweat_smile: ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683405831,
+          "user": "potiuk",
+          "body": "> Thanks @potiuk! It might then even make sense for Cadwyn to wait a few days (this or next week) until I fully remove Pydantic v1, as that will be a larger change, but will probably simplify things. \ud83e\udd14\r\n> \r\n> Also makes me think that maybe I should \"hurry\" to fully remove it instead of waiting more, as that will accelerate/simplify any fixes needed in other projects, instead of having a fix for this version and then having to change more in a few days... \ud83d\ude05\r\n\r\nQuite agree :)",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683457461,
+          "user": "potiuk",
+          "body": "This is BTW. precisely wanted to wait before I talk to Cadwyn, because it was not clear whether it was a delliberate or accidental change, and what direction it will take - and now we can have a very clear message - which I just did: https://github.com/zmievsa/cadwyn/issues/314#issuecomment-3683455138",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683600615,
+          "user": "potiuk",
+          "body": "And limiting airflow for now so that you can release  new fastapi versions as you wish https://github.com/apache/airflow/pull/59726",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683650537,
+          "user": "tiangolo",
+          "body": "Thank you for the help and coordination @potiuk! :raised_hands: ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683704494,
+          "user": "potiuk",
+          "body": "The least we can do as a way to support Fast APi ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683765000,
+          "user": "johnslavik",
+          "body": "To wrap this up:\r\n\r\n> I do not think @tiangolo - you should even relese a new version for us - we we can stay with 0.125.0 until Cadwyn solves it.\r\n\r\nI understand that there's no need to go forward with this PR.\r\nI'll see if I can help fixing this in Cadwyn.\r\n\r\nIf you'd like me to reopen, please let me know.\r\n\r\nThank y'all as well!",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3683859589,
+          "user": "potiuk",
+          "body": "Thanks for your help here as well @johnslavik :) ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3678875644,
+      "user": "codspeed-hq[bot]",
+      "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/johnslavik%3Afix-regr-prepare-response-content?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging #14582 will **not alter performance**\n\n<sub>Comparing <code>johnslavik:fix-regr-prepare-response-content</code> (83d55e4) with <code>master</code> (1d93d53)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (6513d4d) during the generation of this report, so 1d93d53 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 40` untouched  \n\n\n\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3678880455,
+      "user": "johnslavik",
+      "body": "Hmm, I think we need to check for both classes. This proposes not dumping v1, which doesn't seem inline with the recent upgrade.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3678883875,
+      "user": "johnslavik",
+      "body": "For safe typing, it would be better to use unions of `v1.BaseModel` and `BaseModel` (v2) in all proper functions.\r\nThe type checker could then detect unsafe ops on two jointly. I'll shoot for `# type: ignore` from the old version for now.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3678899142,
+      "user": "johnslavik",
+      "body": "Looks like the coverage job deadlocked. Closing and reopening to re-run CI.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3678900863,
+      "user": "johnslavik",
+      "body": "LMK if we want some tests here.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3681771254,
+      "user": "potiuk",
+      "body": "Hello @tiangolo - question - do you have some initial assessment of the issue (even if not yet deciding to merge the PR) - 0.127.0 has also started to fail in Airflow and while it seems the root cause is some interaction between FastAPI and Cadwyn - we should soon take some direction with Airflow - we might also add an issue to Cadwyn if you think it should be solved there - just our reproducers clearly show that currently this case is broken",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3681923803,
+      "user": "YuriiMotov",
+      "body": "I think if it only fails with Cadwyn, you should first open issue there.\r\nOr, try to come up with the MRE without third-party dependencies",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3682098644,
+      "user": "potiuk",
+      "body": "The MRE in #14575 shows that it only happens with Cadwyn and @johnslavik even proposed a PR fixing it - explaining why it happens (because of Cadwyn copying classes). I will definitely open issue with Cadwyn, but the investigation and fix suggests that it might happen with other tools as well, so my question is more on whether it is intended change or more of something that can (continue as it was before 0.126.0) be handled by Fastapi.\n\nNote, that it's - as usual In those cases - hard to pinpoint who is 'guilty' - I..e. Whether the fact that it worked before was accidental, and whether the change was intentional, so likely if I open an issue in Cadwyn, they will also expect some assessment from FastApI point of view.\n\nSo I guess just looking at it and assessing by the maintainers might shorten the ping-pong ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3682792249,
+      "user": "tiangolo",
+      "body": "Thanks all for the feedback!\r\n\r\n## Rationale and current state\r\n\r\nSo, in Pydantic v2, with the default behavior in FastAPI (without Cadwyn), this code path would never be reached (if I'm understanding my own code correctly :sweat_smile: ), because a Pydantic v2 model would always have a `ModelField` with a `serialize()` method.\r\n\r\nBefore that PR it was passing everything through this serialization to account for installations of Pydantic v1.\r\n\r\nBut that also means that data is (slowly) double serialized in Python using this code. In Pydantic v2, the serialize method is used, and that uses the `TypeAdapter.dump_python` method, which serializes the data using the internal Pydantic core schema on the Rust side. So, things are much faster.\r\n\r\nThe state before this change was sub-optimal, for the sake of backwards compatibility, but now that I'm removing support for Pydantic v1, it doesn't make sense to do double serialization.\r\n\r\nYesterday I made another release raising a warning when users use Pydantic v1. This week I plan on fully dropping support for Pydantic v1 and raise an error if people use it.\r\n\r\nThat will mean a major internal cleanup, removing a lot of workarounds to support both v1 and v2 at the same time. This will improve performance, correctness, remove a whole range of existing/potential bugs happening from all that custom logic, and will enable a bunch of new features.\r\n\r\nOne of the important new features, which is partially now available, is precisely serializing on the Pydantic side when possible.\r\n\r\nThere are these refactors and some other internal improvements I need to make, some of the future ones will include router refactors that will allow other tools to add their own logic without needing to resort to touching FastAPI internals. But first I have to finish these things.\r\n\r\n## This specific issue\r\n\r\nNow, given all the above, soon I will remove most of this code, once I drop support for Pydantic v1, probably this week or the next.\r\n\r\nI could still make a quick patch version now with this PR, for this specific use case, ideally with a test that fails with master but passes with this PR, to ensure it solves the problem. But it would be something temporary, just to have a release that works and you can use for now.\r\n\r\nBut I imagine some other things will change as well this week or the next once I fully drop support for Pydantic v1. :thinking: ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3682835065,
+      "user": "johnslavik",
+      "body": "> ideally with a test that fails with master but passes with this PR, to ensure it solves the problem\r\n\r\nNoted. Thank you very much for the quick response. I'll add the test shortly and ping you back.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683101805,
+      "user": "potiuk",
+      "body": "Also I think if that's the case, then indeed this is something to be fixed on Cadwyn side. I do not think @tiangolo  - you  should even relese a new version for us - we we can stay with 0.125.0 until Cadwyn solves it.",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683109245,
+      "user": "potiuk",
+      "body": "The issue is already open https://github.com/zmievsa/cadwyn/issues/314\r\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683183637,
+      "user": "tiangolo",
+      "body": "Thanks @potiuk! It might then even make sense for Cadwyn to wait a few days (this or next week) until I fully remove Pydantic v1, as that will be a larger change, but will probably simplify things. :thinking: \r\n\r\nAlso makes me think that maybe I should \"hurry\" to fully remove it instead of waiting more, as that will accelerate/simplify any fixes needed in other projects, instead of having a fix for this version and then having to change more in a few days... :sweat_smile: ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683405831,
+      "user": "potiuk",
+      "body": "> Thanks @potiuk! It might then even make sense for Cadwyn to wait a few days (this or next week) until I fully remove Pydantic v1, as that will be a larger change, but will probably simplify things. \ud83e\udd14\r\n> \r\n> Also makes me think that maybe I should \"hurry\" to fully remove it instead of waiting more, as that will accelerate/simplify any fixes needed in other projects, instead of having a fix for this version and then having to change more in a few days... \ud83d\ude05\r\n\r\nQuite agree :)",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683457461,
+      "user": "potiuk",
+      "body": "This is BTW. precisely wanted to wait before I talk to Cadwyn, because it was not clear whether it was a delliberate or accidental change, and what direction it will take - and now we can have a very clear message - which I just did: https://github.com/zmievsa/cadwyn/issues/314#issuecomment-3683455138",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683600615,
+      "user": "potiuk",
+      "body": "And limiting airflow for now so that you can release  new fastapi versions as you wish https://github.com/apache/airflow/pull/59726",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683650537,
+      "user": "tiangolo",
+      "body": "Thank you for the help and coordination @potiuk! :raised_hands: ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683704494,
+      "user": "potiuk",
+      "body": "The least we can do as a way to support Fast APi ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683765000,
+      "user": "johnslavik",
+      "body": "To wrap this up:\r\n\r\n> I do not think @tiangolo - you should even relese a new version for us - we we can stay with 0.125.0 until Cadwyn solves it.\r\n\r\nI understand that there's no need to go forward with this PR.\r\nI'll see if I can help fixing this in Cadwyn.\r\n\r\nIf you'd like me to reopen, please let me know.\r\n\r\nThank y'all as well!",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3683859589,
+      "user": "potiuk",
+      "body": "Thanks for your help here as well @johnslavik :) ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

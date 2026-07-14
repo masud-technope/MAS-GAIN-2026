@@ -1,0 +1,160 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14789,
+  "title": "\ud83d\udc1b Fix TYPE_CHECKING annotations for Python 3.14 (PEP 649)",
+  "description": "PR #14485 fixed support for if TYPE_CHECKING, non-evaluated stringified annotations, when using `from __future__ import annotations`.\r\n\r\nThis change adds the same support when using deferred evaluation of annotations introduced in Python 3.14.\r\n\r\nNote: I was also able to reproduce the issue by removing `from __future__ import annotations` from `tests/test_stringified_annotation_dependency.py` (using python 3.14). \r\n\r\nIt has been [discussed here](https://github.com/fastapi/fastapi/discussions/14784) ",
+  "changed_files": [
+    {
+      "path": "fastapi/dependencies/utils.py",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-1",
+      "patch": "@@ -204,7 +204,12 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:\n         except NameError:\n             # Handle type annotations with if TYPE_CHECKING, not used by FastAPI\n             # e.g. dependency return types\n-            signature = inspect.signature(call)\n+            if sys.version_info >= (3, 14):\n+                from annotationlib import Format\n+\n+                signature = inspect.signature(call, annotation_format=Format.FORWARDREF)\n+            else:\n+                signature = inspect.signature(call)\n     else:\n         signature = inspect.signature(call)\n     return signature",
+      "changed_code": "except NameError:\n            # Handle type annotations with if TYPE_CHECKING, not used by FastAPI\n            # e.g. dependency return types\n            signature = inspect.signature(call)\n            if sys.version_info >= (3, 14):\n                from annotationlib import Format\n\n                signature = inspect.signature(call, annotation_format=Format.FORWARDREF)\n            else:\n                signature = inspect.signature(call)\n    else:\n        signature = inspect.signature(call)\n    return signature",
+      "review_comments": [
+        {
+          "id": 2749611842,
+          "user": "mgu",
+          "body": "I could move this import to top level, wdyt?",
+          "line": 208,
+          "original_line": 208,
+          "position": 6,
+          "target_code": "@@ -204,7 +204,12 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:\n         except NameError:\n             # Handle type annotations with if TYPE_CHECKING, not used by FastAPI\n             # e.g. dependency return types\n-            signature = inspect.signature(call)\n+            if sys.version_info >= (3, 14):\n+                from annotationlib import Format",
+          "source": "review_comment"
+        },
+        {
+          "id": 3828612099,
+          "user": "codspeed-hq[bot]",
+          "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## Merging this PR will **not alter performance**\n\n\n\n\n`\u2705 20` untouched benchmarks  \n\n\n\n---\n\n<sub>Comparing <code>mgu:fix-if-type-checking-py-314</code> (3d7abf2) with <code>master</code> (f3f4981)[^unexpected-base]</sub>\n\n<a href=\"https://codspeed.io/fastapi/fastapi/branches/mgu%3Afix-if-type-checking-py-314?utm_source=github&utm_medium=comment-v2&utm_content=button\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-dark.svg\">\n    <source media=\"(prefers-color-scheme: light)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\">\n    <img alt=\"Open in CodSpeed\" src=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\" width=\"169\" height=\"32\">\n  </picture>\n</a>\n\n[^unexpected-base]: No successful run was found on <code>master</code> (eacbce2) during the generation of this report, so f3f4981 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3847196758,
+          "user": "mgu",
+          "body": "@YuriiMotov I don't know the processes here, do I have something else to do on my side? \ud83d\ude0a ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3847497221,
+          "user": "YuriiMotov",
+          "body": "> @YuriiMotov I don't know the processes here, do I have something else to do on my side? \ud83d\ude0a\r\n\r\nNext step is review by Sebastian. We should just wait and resolve merge conflicts if any (PR will be marked with `conflicts` label if there are merge conflicts)",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_stringified_annotation_dependency_py314.py",
+      "status": "added",
+      "additions": 30,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-2",
+      "patch": "@@ -0,0 +1,30 @@\n+from typing import TYPE_CHECKING, Annotated\n+\n+from fastapi import Depends, FastAPI\n+from fastapi.testclient import TestClient\n+\n+from .utils import needs_py314\n+\n+if TYPE_CHECKING:  # pragma: no cover\n+\n+    class DummyUser: ...\n+\n+\n+@needs_py314\n+def test_stringified_annotation():\n+    # python3.14: Use forward reference without \"from __future__ import annotations\"\n+    async def get_current_user() -> DummyUser | None:\n+        return None\n+\n+    app = FastAPI()\n+\n+    client = TestClient(app)\n+\n+    @app.get(\"/\")\n+    async def get(\n+        current_user: Annotated[DummyUser | None, Depends(get_current_user)],\n+    ) -> str:\n+        return \"hello world\"\n+\n+    response = client.get(\"/\")\n+    assert response.status_code == 200",
+      "changed_code": "from typing import TYPE_CHECKING, Annotated\n\nfrom fastapi import Depends, FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom .utils import needs_py314\n\nif TYPE_CHECKING:  # pragma: no cover\n\n    class DummyUser: ...\n\n\n@needs_py314\ndef test_stringified_annotation():\n    # python3.14: Use forward reference without \"from __future__ import annotations\"\n    async def get_current_user() -> DummyUser | None:\n        return None\n\n    app = FastAPI()\n\n    client = TestClient(app)\n\n    @app.get(\"/\")\n    async def get(\n        current_user: Annotated[DummyUser | None, Depends(get_current_user)],\n    ) -> str:\n        return \"hello world\"\n\n    response = client.get(\"/\")\n    assert response.status_code == 200",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_tutorial/test_dependencies/test_tutorial008.py",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 2,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-3",
+      "patch": "@@ -1,4 +1,5 @@\n import importlib\n+import sys\n from types import ModuleType\n from typing import Annotated, Any\n from unittest.mock import Mock, patch\n@@ -12,8 +13,13 @@\n     name=\"module\",\n     params=[\n         \"tutorial008_py39\",\n-        # Fails with `NameError: name 'DepA' is not defined`\n-        pytest.param(\"tutorial008_an_py39\", marks=pytest.mark.xfail),\n+        pytest.param(\n+            \"tutorial008_an_py39\",\n+            marks=pytest.mark.xfail(\n+                sys.version_info < (3, 14),\n+                reason=\"Fails with `NameError: name 'DepA' is not defined`\",\n+            ),\n+        ),\n     ],\n )\n def get_module(request: pytest.FixtureRequest):",
+      "changed_code": "import importlib\nimport sys\nfrom types import ModuleType\nfrom typing import Annotated, Any\nfrom unittest.mock import Mock, patch\n    name=\"module\",\n    params=[\n        \"tutorial008_py39\",\n        # Fails with `NameError: name 'DepA' is not defined`\n        pytest.param(\"tutorial008_an_py39\", marks=pytest.mark.xfail),\n        pytest.param(\n            \"tutorial008_an_py39\",\n            marks=pytest.mark.xfail(\n                sys.version_info < (3, 14),\n                reason=\"Fails with `NameError: name 'DepA' is not defined`\",\n            ),\n        ),\n    ],\n)\ndef get_module(request: pytest.FixtureRequest):",
+      "review_comments": []
+    },
+    {
+      "path": "tests/utils.py",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-4",
+      "patch": "@@ -6,8 +6,8 @@\n needs_py310 = pytest.mark.skipif(\n     sys.version_info < (3, 10), reason=\"requires python3.10+\"\n )\n-needs_py_lt_314 = pytest.mark.skipif(\n-    sys.version_info >= (3, 14), reason=\"requires python3.13-\"\n+needs_py314 = pytest.mark.skipif(\n+    sys.version_info < (3, 14), reason=\"requires python3.14+\"\n )\n \n ",
+      "changed_code": "needs_py310 = pytest.mark.skipif(\n    sys.version_info < (3, 10), reason=\"requires python3.10+\"\n)\nneeds_py_lt_314 = pytest.mark.skipif(\n    sys.version_info >= (3, 14), reason=\"requires python3.13-\"\nneeds_py314 = pytest.mark.skipif(\n    sys.version_info < (3, 14), reason=\"requires python3.14+\"\n)",
+      "review_comments": [
+        {
+          "id": 2749610463,
+          "user": "mgu",
+          "body": "`needs_py_lt_314` wasn't used",
+          "line": null,
+          "original_line": 10,
+          "position": 1,
+          "target_code": "@@ -6,8 +6,8 @@\n needs_py310 = pytest.mark.skipif(\n     sys.version_info < (3, 10), reason=\"requires python3.10+\"\n )\n-needs_py_lt_314 = pytest.mark.skipif(\n-    sys.version_info >= (3, 14), reason=\"requires python3.13-\"\n+needs_py314 = pytest.mark.skipif(\n+    sys.version_info < (3, 14), reason=\"requires python3.14-\"",
+          "source": "review_comment"
+        }
+      ]
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 2749610463,
+      "user": "mgu",
+      "body": "`needs_py_lt_314` wasn't used",
+      "path": "tests/utils.py",
+      "line": null,
+      "original_line": 10,
+      "position": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-4",
+      "target_code": "@@ -6,8 +6,8 @@\n needs_py310 = pytest.mark.skipif(\n     sys.version_info < (3, 10), reason=\"requires python3.10+\"\n )\n-needs_py_lt_314 = pytest.mark.skipif(\n-    sys.version_info >= (3, 14), reason=\"requires python3.13-\"\n+needs_py314 = pytest.mark.skipif(\n+    sys.version_info < (3, 14), reason=\"requires python3.14-\""
+    },
+    {
+      "id": 2749611842,
+      "user": "mgu",
+      "body": "I could move this import to top level, wdyt?",
+      "path": "fastapi/dependencies/utils.py",
+      "line": 208,
+      "original_line": 208,
+      "position": 6,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14789/files#diff-1",
+      "target_code": "@@ -204,7 +204,12 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:\n         except NameError:\n             # Handle type annotations with if TYPE_CHECKING, not used by FastAPI\n             # e.g. dependency return types\n-            signature = inspect.signature(call)\n+            if sys.version_info >= (3, 14):\n+                from annotationlib import Format"
+    },
+    {
+      "id": 3828612099,
+      "user": "codspeed-hq[bot]",
+      "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## Merging this PR will **not alter performance**\n\n\n\n\n`\u2705 20` untouched benchmarks  \n\n\n\n---\n\n<sub>Comparing <code>mgu:fix-if-type-checking-py-314</code> (3d7abf2) with <code>master</code> (f3f4981)[^unexpected-base]</sub>\n\n<a href=\"https://codspeed.io/fastapi/fastapi/branches/mgu%3Afix-if-type-checking-py-314?utm_source=github&utm_medium=comment-v2&utm_content=button\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-dark.svg\">\n    <source media=\"(prefers-color-scheme: light)\" srcset=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\">\n    <img alt=\"Open in CodSpeed\" src=\"https://codspeed.io/pr-report/open-in-codspeed-light.svg\" width=\"169\" height=\"32\">\n  </picture>\n</a>\n\n[^unexpected-base]: No successful run was found on <code>master</code> (eacbce2) during the generation of this report, so f3f4981 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3847196758,
+      "user": "mgu",
+      "body": "@YuriiMotov I don't know the processes here, do I have something else to do on my side? \ud83d\ude0a ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3847497221,
+      "user": "YuriiMotov",
+      "body": "> @YuriiMotov I don't know the processes here, do I have something else to do on my side? \ud83d\ude0a\r\n\r\nNext step is review by Sebastian. We should just wait and resolve merge conflicts if any (PR will be marked with `conflicts` label if there are merge conflicts)",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "repo": "fastapi/fastapi",
+  "pull_request_id": 14786,
+  "title": "\ud83d\udc1b Strip whitespaces from `Authorization` header credentials",
+  "description": "## Description\r\n\r\nFixes whitespace handling in authorization header parameter extraction to comply with [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-2.1).\r\n\r\n## Problem\r\n\r\nThe current implementation preserves leading/trailing whitespace in the extracted credential parameter. While RFC 6750 allows one or more spaces (`1*SP`) between \"Bearer\" and the token, the token definition (`b64token`) doesn't include whitespace characters, meaning spaces should be treated as separators only.\r\n\r\nThis causes the extracted credentials to include extraneous whitespace, which can lead to authentication failures.\r\n\r\n## Solution\r\n\r\nAdded `.strip()` to the parameter extraction to remove leading and trailing whitespace:\r\n```python\r\nreturn scheme, param.strip()\r\n```\r\n\r\n## Reproduction\r\n\r\n### Before the fix:\r\n```python\r\nfrom typing import Annotated\r\nfrom fastapi import Depends, FastAPI\r\nfrom fastapi.security import HTTPAuthorizationCredentials, HTTPBearer\r\n\r\napp = FastAPI()\r\nsecurity = HTTPBearer()\r\n\r\n@app.get(\"/users/me\")\r\ndef read_current_user(\r\n    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]\r\n):\r\n    return {\"scheme\": credentials.scheme, \"credentials\": credentials.credentials}\r\n```\r\n\r\n**Test case 1: Single space (correct)**\r\n```bash\r\ncurl -X 'GET' \\\r\n  'http://127.0.0.1:8000/users/me' \\\r\n  -H 'Authorization: Bearer xxx'\r\n```\r\nResponse: `{\"scheme\":\"Bearer\",\"credentials\":\"xxx\"}` \u2713\r\n\r\n**Test case 2: Multiple spaces**\r\n```bash\r\ncurl -X 'GET' \\\r\n  'http://127.0.0.1:8000/users/me' \\\r\n  -H 'Authorization: Bearer   xxx'\r\n```\r\nResponse: `{\"scheme\":\"Bearer\",\"credentials\":\"  xxx\"}` \u2717\r\n\r\n**Test case 3: Trailing whitespace**\r\n```bash\r\ncurl -X 'GET' \\\r\n  'http://127.0.0.1:8000/users/me' \\\r\n  -H 'Authorization: Bearer xxx '\r\n```\r\nResponse: `{\"scheme\":\"Bearer\",\"credentials\":\"xxx \"}` \u2717\r\n\r\n### After the fix:\r\n\r\nAll three test cases now return: `{\"scheme\":\"Bearer\",\"credentials\":\"xxx\"}` \u2713\r\n\r\n## Changes\r\n\r\n- Modified `get_authorization_scheme_param()` in `fastapi/security/utils.py` to strip whitespace from the parameter\r\n- Added test cases to verify the fix handles multiple spaces and trailing whitespace correctly\r\n\r\n## Checklist\r\n\r\n- [x] Tests added to cover the bug fix\r\n- [x] Existing tests pass",
+  "changed_files": [
+    {
+      "path": "fastapi/security/utils.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14786/files#diff-1",
+      "patch": "@@ -7,4 +7,4 @@ def get_authorization_scheme_param(\n     if not authorization_header_value:\n         return \"\", \"\"\n     scheme, _, param = authorization_header_value.partition(\" \")\n-    return scheme, param\n+    return scheme, param.strip()",
+      "changed_code": "if not authorization_header_value:\n        return \"\", \"\"\n    scheme, _, param = authorization_header_value.partition(\" \")\n    return scheme, param\n    return scheme, param.strip()",
+      "review_comments": [
+        {
+          "id": 3823248905,
+          "user": "codspeed-hq[bot]",
+          "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/WaveTheory1%3Afix-auth-header-whitespace?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging this PR will **not alter performance**\n\n<sub>Comparing <code>WaveTheory1:fix-auth-header-whitespace</code> (2900456) with <code>master</code> (f3f4981)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (eacbce2) during the generation of this report, so f3f4981 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 20` untouched benchmarks  \n\n\n\n",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        },
+        {
+          "id": 3846666870,
+          "user": "WaveTheory1",
+          "body": "Thanks for the review @YuriiMotov! Happy to get this merged whenever you're ready \ud83d\ude04 ",
+          "line": null,
+          "original_line": null,
+          "position": null,
+          "target_code": "",
+          "source": "issue_comment"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_security_http_base.py",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14786/files#diff-2",
+      "patch": "@@ -21,6 +21,12 @@ def test_security_http_base():\n     assert response.json() == {\"scheme\": \"Other\", \"credentials\": \"foobar\"}\n \n \n+def test_security_http_base_with_whitespaces():\n+    response = client.get(\"/users/me\", headers={\"Authorization\": \"Other  foobar \"})\n+    assert response.status_code == 200, response.text\n+    assert response.json() == {\"scheme\": \"Other\", \"credentials\": \"foobar\"}\n+\n+\n def test_security_http_base_no_credentials():\n     response = client.get(\"/users/me\")\n     assert response.status_code == 401, response.text",
+      "changed_code": "assert response.json() == {\"scheme\": \"Other\", \"credentials\": \"foobar\"}\n\n\ndef test_security_http_base_with_whitespaces():\n    response = client.get(\"/users/me\", headers={\"Authorization\": \"Other  foobar \"})\n    assert response.status_code == 200, response.text\n    assert response.json() == {\"scheme\": \"Other\", \"credentials\": \"foobar\"}\n\n\ndef test_security_http_base_no_credentials():\n    response = client.get(\"/users/me\")\n    assert response.status_code == 401, response.text",
+      "review_comments": []
+    },
+    {
+      "path": "tests/test_security_oauth2_authorization_code_bearer.py",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 0,
+      "file_url": "https://github.com/fastapi/fastapi/pull/14786/files#diff-3",
+      "patch": "@@ -37,6 +37,12 @@ def test_token():\n     assert response.json() == {\"token\": \"testtoken\"}\n \n \n+def test_token_with_whitespaces():\n+    response = client.get(\"/items\", headers={\"Authorization\": \"Bearer  testtoken \"})\n+    assert response.status_code == 200, response.text\n+    assert response.json() == {\"token\": \"testtoken\"}\n+\n+\n def test_openapi_schema():\n     response = client.get(\"/openapi.json\")\n     assert response.status_code == 200, response.text",
+      "changed_code": "assert response.json() == {\"token\": \"testtoken\"}\n\n\ndef test_token_with_whitespaces():\n    response = client.get(\"/items\", headers={\"Authorization\": \"Bearer  testtoken \"})\n    assert response.status_code == 200, response.text\n    assert response.json() == {\"token\": \"testtoken\"}\n\n\ndef test_openapi_schema():\n    response = client.get(\"/openapi.json\")\n    assert response.status_code == 200, response.text",
+      "review_comments": []
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 3823248905,
+      "user": "codspeed-hq[bot]",
+      "body": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ -->\n## [CodSpeed Performance Report](https://codspeed.io/fastapi/fastapi/branches/WaveTheory1%3Afix-auth-header-whitespace?utm_source=github&utm_medium=comment&utm_content=header)\n\n### Merging this PR will **not alter performance**\n\n<sub>Comparing <code>WaveTheory1:fix-auth-header-whitespace</code> (2900456) with <code>master</code> (f3f4981)[^unexpected-base]</sub>\n[^unexpected-base]: No successful run was found on <code>master</code> (eacbce2) during the generation of this report, so f3f4981 was used instead as the comparison base. There might be some changes unrelated to this pull request in this report.\n\n\n\n### Summary\n\n`\u2705 20` untouched benchmarks  \n\n\n\n",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    },
+    {
+      "id": 3846666870,
+      "user": "WaveTheory1",
+      "body": "Thanks for the review @YuriiMotov! Happy to get this merged whenever you're ready \ud83d\ude04 ",
+      "path": null,
+      "line": null,
+      "original_line": null,
+      "position": null,
+      "file_url": null,
+      "target_code": "",
+      "source": "issue_comment"
+    }
+  ]
+}
