@@ -1,0 +1,14 @@
+Index: 0, A, 3, 8, 5
+Index: 1, A, 5, 9, 4
+Index: 2, A, 3, 8, 5
+Index: 3, A, 3, 8, 5
+Index: 4, A, 3, 8, 5
+Index: 5, A, 5, 8, 3
+Index: 6, A, 3, 8, 5
+Index: 7, B, 7, 0, 7
+Index: 8, A, 3, 7, 4
+Index: 9, A, 3, 8, 5
+Index: 10, A, 3, 8, 5
+Index: 11, A, 3, 8, 5
+Index: 12, A, 3, 8, 5
+Index: 13, A, 8, 10, 2

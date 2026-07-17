@@ -1,0 +1,13 @@
+Index: 0, A, 2, 8, 6
+Index: 1, Equivalent, 0, 10, 10
+Index: 2, B, 2, 7, 9
+Index: 3, A, 3, 8, 5
+Index: 4, Equivalent, 0, 10, 10
+Index: 5, B, 2, 6, 8
+Index: 6, Equivalent, 0, 8, 8
+Index: 7, Equivalent, 0, 8, 8
+Index: 8, A, 2, 8, 6
+Index: 9, A, 2, 8, 6
+Index: 10, A, 2, 8, 6
+Index: 11, Equivalent, 0, 8, 8
+Index: 12, B, 2, 7, 9
