@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
-"""Fetch a GitHub pull request and extract metadata, changed files, and paired review comments.
 
+"""Fetch a GitHub pull request and extract metadata, changed files, and paired review comments.
 Examples:
     python collect_pr_data.py octocat/Hello-World 1
     python collect_pr_data.py --repo-url https://github.com/octocat/Hello-World/pull/1
     python collect_pr_data.py octocat/Hello-World 1 --token $GITHUB_TOKEN --output pr.json
 """
+# Disclaimer: This code was originally created by GitHub Co-pilot.
 
 import argparse
 import json
